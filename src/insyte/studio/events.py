@@ -1,0 +1,271 @@
+"""Server-Sent Events for streaming user-safe analysis progress (spec §9).
+
+The runner emits coarse, user-visible progress events (never internal chain-of-thought) and a
+final ``response_completed`` event carrying the structured :class:`AnalysisResult`. Every
+analysis goes through the shared :class:`AnalysisService`, so validation, limits, PII masking
+and audit logging all apply.
+"""
+
+from __future__ import annotations
+
+import json
+from collections.abc import Callable, Iterator
+from datetime import UTC, datetime
+
+from insyte.analytics.charts import format_value
+from insyte.analytics.forecast import project_current_year
+from insyte.analytics.models import Period, TimeGrain
+from insyte.analytics.periods import periods_for_grain
+from insyte.config.models import AnalyticsMode, InsyteConfig
+from insyte.connectors.base import DatabaseConnector
+from insyte.exceptions import InsyteError, QueryValidationError
+from insyte.nl.llm import available_backends, resolve
+from insyte.nl.periods import period_from_token
+from insyte.semantic.models import MetricFormat, SemanticLayer
+from insyte.services.analysis_service import AnalysisService
+from insyte.services.schema_service import SchemaService
+from insyte.studio.schemas import (
+    AnalysisResult,
+    DataFreshness,
+    MetricCard,
+    studio_result_blocked,
+    studio_result_from_analysis,
+    studio_result_from_comparison,
+    studio_result_message,
+)
+from insyte.tui.intent import AnalysisMode, Intent, IntentKind, parse_intent
+
+AnalysisFactory = Callable[[], tuple[AnalysisService, DatabaseConnector]]
+_SOURCE = "studio"
+
+
+def sse(event: str, data: dict) -> str:
+    """Format one Server-Sent Event."""
+
+    return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+
+
+def freshness(config: InsyteConfig, schema: SchemaService) -> DataFreshness:
+    latest = schema.latest_scan() if schema.has_metadata() else None
+    return DataFreshness(
+        mode=config.analytics.mode.value,
+        last_scan=latest.finished_at if latest else None,
+    )
+
+
+def stream_analysis(
+    *,
+    analysis_id: str,
+    question: str,
+    layer: SemanticLayer,
+    config: InsyteConfig,
+    schema: SchemaService,
+    analysis_factory: AnalysisFactory,
+    on_complete: Callable[[AnalysisResult], None],
+    history: list[tuple[str, str]] | None = None,
+) -> Iterator[str]:
+    """Yield SSE strings for an analysis and persist the final result via ``on_complete``."""
+
+    yield sse("question_received", {"analysis_id": analysis_id})
+    intent = parse_intent(question, layer)
+    yield sse("context_resolved", {})
+
+    period: Period | None = None
+    if intent.kind is not IntentKind.analysis or intent.metric is None:
+        # The deterministic parser couldn't map it — ask the user's local AI CLI to translate.
+        # Try each installed CLI in turn so a failing one (e.g. an org-disabled Claude) falls
+        # through to a working one (e.g. Codex).
+        backends = available_backends(config.ai.studio_backend)
+        resolution = None
+        if backends:
+            yield sse("ai_resolving", {"backend": backends[0].name})
+            for backend in backends:
+                resolution = resolve(question, layer, backend, history=history)
+                if resolution is not None:
+                    break
+
+        if resolution is None:
+            result = studio_result_message(
+                analysis_id,
+                "I couldn't identify a metric in that question.",
+                suggested=_suggestions(layer),
+            )
+            on_complete(result)
+            yield sse("response_completed", {"result": result.model_dump(mode="json")})
+            return
+
+        if resolution.kind == "message":
+            result = studio_result_message(
+                analysis_id,
+                resolution.text or "I can help you analyse your data.",
+                status="message",
+                suggested=_suggestions(layer),
+            )
+            on_complete(result)
+            yield sse("response_completed", {"result": result.model_dump(mode="json")})
+            return
+
+        intent = Intent(
+            IntentKind.analysis,
+            mode=resolution.mode or AnalysisMode.aggregate,
+            metric=resolution.metric,
+            grain=resolution.grain,
+            dimension=resolution.dimension,
+            raw=question,
+        )
+        period = period_from_token(resolution.period)
+
+    yield sse("metric_resolved", {"metric": intent.metric})
+    mode = intent.mode or AnalysisMode.aggregate
+    yield sse("analysis_planned", {"mode": mode.value, "dimension": intent.dimension})
+
+    data_freshness = freshness(config, schema)
+    analysis, connector = analysis_factory()
+    try:
+        yield sse("sql_generated", {})
+        yield sse("sql_validated", {})
+        yield sse("query_started", {})
+        try:
+            result = _dispatch(analysis, intent, analysis_id, layer, data_freshness, period)
+        except QueryValidationError as exc:
+            result = studio_result_blocked(analysis_id, exc.violations)
+            on_complete(result)
+            yield sse("query_blocked", {"violations": exc.violations})
+            yield sse("response_completed", {"result": result.model_dump(mode="json")})
+            return
+        except InsyteError as exc:
+            result = studio_result_message(
+                analysis_id, str(exc), status="error", warnings=[str(exc)]
+            )
+            on_complete(result)
+            yield sse("response_completed", {"result": result.model_dump(mode="json")})
+            return
+    finally:
+        connector.dispose()
+
+    yield sse("query_completed", {"rows": result.query.rows_returned if result.query else 0})
+    yield sse("chart_prepared", {"charts": len(result.charts)})
+    on_complete(result)
+    yield sse("response_completed", {"result": result.model_dump(mode="json")})
+
+
+def _dispatch(
+    analysis: AnalysisService,
+    intent: Intent,
+    analysis_id: str,
+    layer: SemanticLayer,
+    data_freshness: DataFreshness,
+    period: Period | None = None,
+) -> AnalysisResult:
+    metric = intent.metric
+    assert metric is not None
+    fmt = layer.metrics[metric].format if metric in layer.metrics else MetricFormat.number
+    suggested = _suggestions(layer)
+
+    if intent.mode is AnalysisMode.forecast:
+        return _forecast(analysis, metric, analysis_id, fmt, data_freshness, suggested)
+    if intent.mode is AnalysisMode.segment and intent.dimension:
+        domain = analysis.segment(metric, intent.dimension, period)
+        return studio_result_from_analysis(analysis_id, domain, fmt, data_freshness, suggested)
+    if intent.mode is AnalysisMode.timeseries and intent.grain:
+        domain = analysis.timeseries(metric, intent.grain, period)
+        return studio_result_from_analysis(analysis_id, domain, fmt, data_freshness, suggested)
+    if intent.mode is AnalysisMode.compare and intent.grain:
+        current, baseline = periods_for_grain(intent.grain)
+        comparison = analysis.compare(metric, current, baseline)
+        return studio_result_from_comparison(analysis_id, comparison, fmt, data_freshness)
+    domain = analysis.aggregate(metric, period)
+    return studio_result_from_analysis(analysis_id, domain, fmt, data_freshness, suggested)
+
+
+def _as_datetime(value: object) -> datetime:
+    if isinstance(value, datetime):
+        return value
+    return datetime.fromisoformat(str(value))
+
+
+def _forecast(
+    analysis: AnalysisService,
+    metric: str,
+    analysis_id: str,
+    fmt: MetricFormat,
+    freshness: DataFreshness,
+    suggested: list[str],
+) -> AnalysisResult:
+    """Project the current year from the metric's real monthly actuals (deterministic)."""
+
+    domain = analysis.timeseries(metric, TimeGrain.month)
+    result = studio_result_from_analysis(analysis_id, domain, fmt, freshness, suggested)
+
+    points = [
+        (_as_datetime(row[0]), float(row[1]))  # type: ignore[arg-type]
+        for row in domain.rows
+        if row[1] is not None
+    ]
+    projection = project_current_year(points, datetime.now(UTC))
+    if projection is None:
+        return result
+
+    projected = format_value(projection.projected_total, fmt)
+    ytd = format_value(projection.ytd_actual, fmt)
+    run_rate = format_value(projection.run_rate, fmt)
+    result.summary = (
+        f"Projected {domain.label} for {projection.year}: ~{projected}. "
+        f"Based on {projection.complete_months} completed months ({ytd} so far) plus a "
+        f"{run_rate}/month run-rate (average of the last {projection.basis_months}) applied to "
+        f"the remaining {projection.remaining_months} months."
+    )
+    result.metrics = [
+        MetricCard(
+            label=f"{projection.year} projected",
+            value=round(projection.projected_total, 2),
+            format=fmt.value,
+        ),
+        MetricCard(label="YTD actual", value=round(projection.ytd_actual, 2), format=fmt.value),
+        MetricCard(label="Monthly run-rate", value=round(projection.run_rate, 2), format=fmt.value),
+    ]
+    result.projection = {
+        "year": projection.year,
+        "method": "trailing run-rate",
+        "projected_total": round(projection.projected_total, 2),
+        "ytd_actual": round(projection.ytd_actual, 2),
+        "run_rate": round(projection.run_rate, 2),
+        "basis_months": projection.basis_months,
+        "remaining_months": projection.remaining_months,
+    }
+    result.limitations = [
+        "Estimate, not a guarantee: the remaining months are projected at the trailing "
+        f"{projection.basis_months}-month average. Actual results will vary."
+    ]
+    return result
+
+
+_PREFERRED_METRICS = ("grand_total", "total_amount", "revenue", "sales", "order_count", "amount")
+_PREFERRED_DIMENSIONS = ("city", "category", "payment_method", "brand", "type", "status")
+
+
+def _pick(items: list[str], preferred: tuple[str, ...]) -> str:
+    for token in preferred:
+        for item in items:
+            if token in item.lower():
+                return item
+    return items[0]
+
+
+def _suggestions(layer: SemanticLayer) -> list[str]:
+    metric_names = list(layer.metrics)
+    if not metric_names:
+        return []
+    metric = _pick(metric_names, _PREFERRED_METRICS)
+    label = (layer.metrics[metric].label or metric.replace("_", " ")).lower()
+    suggestions = [f"Monthly {label}"]
+    dimensions = list(layer.dimensions)
+    if dimensions:
+        dim = _pick(dimensions, _PREFERRED_DIMENSIONS)
+        dim_label = (layer.dimensions[dim].label or dim.replace("_", " ")).lower()
+        suggestions.append(f"{label} by {dim_label}")
+    return suggestions
+
+
+def local_mode_ready(config: InsyteConfig) -> bool:
+    return config.analytics.mode is AnalyticsMode.local

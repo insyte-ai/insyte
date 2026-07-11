@@ -1,0 +1,101 @@
+/* Insyte terminal UI styles. */
+
+#body {
+    height: 1fr;
+}
+
+#sidebar {
+    width: 26;
+    background: $panel;
+    padding: 1;
+    border-right: solid $primary;
+}
+
+.brand {
+    text-style: bold;
+    color: $accent;
+    padding-bottom: 1;
+}
+
+.nav-heading {
+    color: $accent;
+    text-style: bold;
+    padding-top: 1;
+}
+
+#sidebar Button {
+    width: 100%;
+    margin-bottom: 1;
+}
+
+#main {
+    width: 1fr;
+}
+
+#chat-log {
+    height: 1fr;
+    padding: 1 2;
+}
+
+#prompt {
+    margin: 0 2 1 2;
+}
+
+#status-bar {
+    height: 1;
+    background: $panel;
+    color: $accent;
+    padding: 0 2;
+}
+
+.user-msg {
+    text-style: bold;
+    color: $accent;
+    padding-top: 1;
+}
+
+.msg {
+    padding-bottom: 1;
+}
+
+.msg.error {
+    color: $error;
+}
+
+.thinking {
+    color: $warning;
+}
+
+.result-card {
+    border: round $primary;
+    padding: 1;
+    margin: 1 0;
+    height: auto;
+}
+
+.card-title {
+    text-style: bold;
+    color: $accent;
+}
+
+.card-summary {
+    padding-bottom: 1;
+}
+
+.table-panel {
+    height: auto;
+    padding: 1 0;
+}
+
+.panel-title {
+    text-style: bold;
+    padding-bottom: 1;
+}
+
+.chart {
+    padding: 1 0;
+}
+
+.sql {
+    color: $text;
+}

@@ -1,0 +1,47 @@
+# Annotated reference configuration for an Insyte project.
+# Generated automatically by `insyte init`; edit by hand to customise safety guardrails.
+# The database password is NEVER stored here — only the name of the environment variable
+# that holds the connection URL.
+
+project:
+  name: ecommerce-production
+
+database:
+  type: postgresql
+  url_env: INSYTE_DATABASE_URL      # env var holding postgresql://user:***@host/db
+  allowed_schemas:
+    - public
+  blocked_tables: []
+  blocked_columns:                  # qualified as table.column or schema.table.column
+    - users.password_hash
+    - users.auth_token
+  ssl_mode: require                 # disable | allow | prefer | require | verify-ca | verify-full
+
+query:
+  default_limit: 500
+  maximum_limit: 5000
+  timeout_seconds: 20
+  lock_timeout_seconds: 3
+  maximum_result_bytes: 10000000
+  allow_direct_query: true
+
+profiling:
+  enabled: true
+  sample_rows: 10000
+  maximum_tables: 100
+  maximum_columns_per_table: 200
+  detect_pii: true
+
+analytics:
+  mode: direct                      # direct | local
+  duckdb_path: analytics.duckdb
+
+privacy:
+  mask_pii: true
+  persist_raw_results: false
+  telemetry: false
+
+ai:
+  integration:
+    - claude
+    - codex

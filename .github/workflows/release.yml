@@ -1,0 +1,29 @@
+name: Release to PyPI
+
+# Publishes to PyPI when you push a version tag (e.g. `git tag v0.1.0 && git push --tags`).
+# Uses PyPI Trusted Publishing (OIDC) — no API token needed once configured:
+#   PyPI → project "insyte" → Settings → Publishing → add this repo as a trusted publisher
+#   (workflow: release.yml, environment: pypi).
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write # required for Trusted Publishing
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Build
+        run: uv build
+      - name: Verify the wheel bundles the Studio SPA + logos
+        run: |
+          python -m zipfile -l dist/*.whl | grep studio_dist/assets/app.js
+          python -m zipfile -l dist/*.whl | grep studio_dist/assets/logo-dark.png
+      - name: Publish to PyPI
+        run: uv publish

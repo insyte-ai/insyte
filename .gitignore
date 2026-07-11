@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+coverage.xml
+
+# Insyte local data (should never be committed)
+.insyte/
+*.sqlite
+*.duckdb
+*.parquet
+
+# Frontend (Node) — build output ships in src/insyte/studio_dist, not here
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# Logo source files (the processed versions ship under src/insyte/studio_dist/assets/)
+/dark-bg.png
+/light-bg.png
+/ChatGPT Image*.png
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store
