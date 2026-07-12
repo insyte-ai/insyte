@@ -10,7 +10,14 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from insyte.analytics.models import AnalysisKind, AnalysisResult, ChartSpec, ChartType
+from insyte.analytics.models import (
+    AnalysisKind,
+    AnalysisResult,
+    ChartSpec,
+    ChartType,
+    Period,
+    PeriodComparison,
+)
 from insyte.config import loader, paths
 from insyte.config.models import InsyteConfig, ProjectSection
 from insyte.exceptions import QueryValidationError
@@ -108,7 +115,45 @@ class FakeAnalysis:
         )
 
     def timeseries(self, metric, grain, period=None):
-        return self._result()
+        return AnalysisResult(
+            kind=AnalysisKind.timeseries,
+            metric=metric,
+            label="Payment failure rate",
+            columns=["period", "value"],
+            rows=[
+                (datetime(2026, 5, 1, tzinfo=UTC), 0.2),
+                (datetime(2026, 6, 1, tzinfo=UTC), 0.333),
+            ],
+            formatted_rows=[["2026-05-01", "20.0%"], ["2026-06-01", "33.3%"]],
+            sql="SELECT date_trunc('month', payment_ts), AVG(...) FROM public.payments",
+            chart=ChartSpec(ChartType.line, title="Payment failure rate"),
+            summary="Payment failure rate by month: 2 buckets; latest 33.3%.",
+            row_count=2,
+            duration_ms=5.0,
+        )
+
+    def compare(self, metric, current, baseline):
+        return PeriodComparison(
+            metric=metric,
+            label="Payment failure rate",
+            current=Period(
+                "current month",
+                datetime(2026, 6, 1, tzinfo=UTC),
+                datetime(2026, 7, 1, tzinfo=UTC),
+            ),
+            baseline=Period(
+                "previous month",
+                datetime(2026, 5, 1, tzinfo=UTC),
+                datetime(2026, 6, 1, tzinfo=UTC),
+            ),
+            current_value=0.333,
+            baseline_value=0.2,
+            absolute_change=0.133,
+            percent_change=66.5,
+            sql_current="SELECT AVG(...) FROM public.payments WHERE payment_ts >= ...",
+            sql_baseline="SELECT AVG(...) FROM public.payments WHERE payment_ts >= ...",
+            summary="Payment failure rate increased by 66.5% from previous month to current month.",
+        )
 
 
 def _factory(blocked: bool = False):
@@ -196,6 +241,60 @@ def test_conversation_and_analysis_flow(client: TestClient) -> None:
     assert [m["role"] for m in convo["messages"]] == ["user", "assistant"]
 
 
+def test_investigation_question_streams_timeline(client: TestClient) -> None:
+    conv = client.post("/api/conversations", json={"title": "Investigation"}).json()
+    posted = client.post(
+        f"/api/conversations/{conv['id']}/messages",
+        json={"content": "why did payment failure rate increase"},
+    ).json()
+    events = client.get(posted["stream_url"]).text
+
+    assert "event: investigation_planned" in events
+    assert "event: investigation_step_started" in events
+    assert "event: investigation_step_completed" in events
+    assert "event: investigation_report_ready" in events
+    result = _final_result(events)
+    assert result["status"] == "completed"
+    assert result["investigation"]["plan"]["metric"] == "payment_failure_rate"
+    assert [step["status"] for step in result["investigation"]["plan"]["steps"]]
+    assert "Investigation for payment failure rate" in result["summary"]
+
+
+def test_detailed_investigation_attaches_report(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from insyte.nl.llm import Backend
+    from insyte.studio import events, investigation
+    from insyte.studio.schemas import DetailedReport
+
+    seen_payloads = []
+
+    def fake_report(payload, backend, **_kwargs):  # noqa: ANN001, ANN202
+        seen_payloads.append(payload)
+        return DetailedReport(
+            tl_dr="Total amount increased because the latest month is higher.",
+            evidence=["Trend and segment steps completed."],
+            generated_by=backend.name,
+        )
+
+    monkeypatch.setattr(events, "available_backends", lambda _pref: [Backend("codex", ["codex"])])
+    monkeypatch.setattr(investigation, "resolve_report", fake_report)
+    conv = client.post("/api/conversations", json={"title": "Investigation"}).json()
+    posted = client.post(
+        f"/api/conversations/{conv['id']}/messages",
+        json={"content": "why did payment failure rate increase", "detailed": True},
+    ).json()
+    text = client.get(posted["stream_url"]).text
+    result = _final_result(text)
+
+    assert "event: report_generating" in text
+    assert "event: report_ready" in text
+    assert result["investigation"] is not None
+    assert result["report"]["generated_by"] == "codex"
+    assert seen_payloads[0]["workflow"] == "investigation"
+    assert seen_payloads[0]["computed_findings"]
+
+
 def test_blocked_query_never_runs(isolated_home: Path) -> None:
     _setup_project()
     services = ProjectService.open("demo")
@@ -239,6 +338,10 @@ def test_spa_assets_served(client: TestClient) -> None:
     assert js.status_code == 200
     # The compiled SPA is present (guards the wheel bundling of studio_dist/assets).
     assert "EventSource" in js.text and "renderResult" in js.text
+    assert 'investigation_planned: "Planning your investigation"' in js.text
+    assert "Investigation timeline" in js.text
+    assert "openChartFullscreen" in js.text
+    assert "chart-tip" in js.text
 
 
 def test_spa_fallback_for_client_routes(client: TestClient) -> None:

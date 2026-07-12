@@ -63,6 +63,19 @@ Type questions like *"total order value last month"*, *"orders by payment method
 *"what's the expected revenue this year?"*. Free-form questions use your local Claude/Codex to
 interpret them; Insyte runs the SQL safely and shows the answer (with a chart when useful).
 
+Studio also supports:
+
+- **Follow-up context** — ask a metric question, then follow with "same metric last month" or
+  "now by payment status".
+- **Investigation Mode Lite** — ask "why did total amount change?" to get a deterministic
+  timeline: trend, current-vs-previous comparison, segment breakdown, data freshness, and next
+  questions.
+- **Detailed reports** — turn on the "Detailed report" tool in the composer for an analyst
+  report over the computed result or investigation bundle. Only aggregated, PII-masked outputs
+  are sent to your local Claude/Codex CLI; credentials and raw rows are never sent.
+- **Interactive charts** — hover points/bars for values, expand charts fullscreen, and inspect
+  smoothed trend lines with readable date labels.
+
 ### Terminal UI
 ```bash
 insyte chat

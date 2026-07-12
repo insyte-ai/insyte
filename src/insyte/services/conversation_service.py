@@ -6,9 +6,13 @@ Reuses the project's existing ``metadata.sqlite`` (no separate ``studio.sqlite``
 from __future__ import annotations
 
 import uuid
+from typing import TYPE_CHECKING
 
 from insyte.metadata.models import Conversation, ConversationMessage
 from insyte.metadata.repository import MetadataRepository
+
+if TYPE_CHECKING:
+    from insyte.studio.context import ChatContext
 
 
 def new_conversation_id() -> str:
@@ -59,6 +63,19 @@ class ConversationService:
 
     def messages(self, conversation_id: str) -> list[ConversationMessage]:
         return self._metadata.list_messages(conversation_id)
+
+    def save_context(
+        self, conversation_id: str, context: ChatContext, analysis_id: str | None = None
+    ) -> None:
+        self._metadata.save_context_snapshot(conversation_id, analysis_id, context.to_dict())
+
+    def latest_context(self, conversation_id: str) -> ChatContext | None:
+        from insyte.studio.context import ChatContext
+
+        snapshot = self._metadata.latest_context_snapshot(conversation_id)
+        if snapshot is None:
+            return None
+        return ChatContext.from_dict(snapshot.context_json)
 
     def save_analysis(
         self,

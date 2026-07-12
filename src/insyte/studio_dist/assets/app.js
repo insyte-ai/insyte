@@ -405,10 +405,22 @@
     ai_resolving: "Thinking",
     metric_resolved: "Finding the right data",
     analysis_planned: "Planning the analysis",
+    investigation_planned: "Planning your investigation",
+    investigation_step_started: "Running an investigation step",
+    investigation_step_completed: "Reviewing the finding",
+    investigation_report_ready: "Preparing the investigation summary",
     query_started: "Running the query",
     query_completed: "Crunching the numbers",
     chart_prepared: "Preparing your answer",
   };
+
+  function readableEventName(name) {
+    return String(name || "")
+      .split("_")
+      .filter(Boolean)
+      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+      .join(" ");
+  }
 
   function streamAnalysis(log, job) {
     const text = el("span", { class: "loader-text" }, "Reading your question…");
@@ -423,7 +435,7 @@
     setComposerBusy(true);
 
     Object.keys(PHASES).forEach((ev) =>
-      source.addEventListener(ev, () => { text.textContent = PHASES[ev] + "…"; })
+      source.addEventListener(ev, () => { text.textContent = (PHASES[ev] || readableEventName(ev)) + "…"; })
     );
     source.addEventListener("query_blocked", () => {});
     source.addEventListener("report_generating", () => { text.textContent = "Writing your detailed report…"; });
@@ -477,6 +489,7 @@
       el("div", { class: "label" }, r.projection ? "Projection" : "Answer"),
       el("div", { class: "text" }, r.summary)
     ));
+    if (r.investigation) card.append(renderInvestigation(r.investigation));
     if (r.limitations && r.limitations.length) {
       card.append(el("div", { class: "tab-body" }, el("div", { class: "warn-box" }, r.limitations.join("; "))));
     }
@@ -589,6 +602,37 @@
     );
   }
 
+  function renderInvestigation(inv) {
+    const steps = inv.plan && inv.plan.steps ? inv.plan.steps : [];
+    const wrap = el("div", { class: "investigation" },
+      el("div", { class: "investigation-head" },
+        el("span", { class: "investigation-title" }, "Investigation timeline"),
+        inv.plan && inv.plan.period ? el("span", { class: "investigation-period" }, inv.plan.period) : null
+      )
+    );
+    if (steps.length) {
+      wrap.append(el("div", { class: "investigation-steps" }, ...steps.map((step) =>
+        el("div", { class: "investigation-step " + (step.status || "pending") },
+          el("span", { class: "step-dot" }),
+          el("div", { class: "step-body" },
+            el("div", { class: "step-top" },
+              el("span", { class: "step-title" }, step.title || readableEventName(step.kind)),
+              el("span", { class: "step-status" }, readableEventName(step.status || "pending"))
+            ),
+            step.key_finding ? el("div", { class: "step-finding" }, step.key_finding) : null,
+            step.limitation ? el("div", { class: "step-limitation" }, step.limitation) : null
+          )
+        )
+      )));
+    }
+    if (inv.findings && inv.findings.length) {
+      wrap.append(el("div", { class: "investigation-findings" },
+        ...inv.findings.slice(0, 3).map((finding) => el("div", {}, finding))
+      ));
+    }
+    return wrap;
+  }
+
   // ---- detailed report dashboard ---------------------------------------------------------
   function reportSection(title) {
     return el("div", { class: "report-section" }, title);
@@ -601,6 +645,8 @@
       el("span", { class: "report-title" }, "◍ Detailed report"),
       el("span", { class: "conf-chip " + (rep.confidence_overall || "medium") }, (rep.confidence_overall || "medium") + " confidence")
     ));
+    if (rep.tl_dr) wrap.append(el("div", { class: "tl-dr" }, rep.tl_dr));
+    if (rep.decision) wrap.append(el("div", { class: "decision" }, el("b", {}, "Decision: "), rep.decision));
     if (rep.executive_summary) wrap.append(el("div", { class: "exec" }, rep.executive_summary));
     if (r.metrics && r.metrics.length) wrap.append(el("div", { class: "metric-row" }, ...r.metrics.map(metricCard)));
 
@@ -610,6 +656,14 @@
     if (rep.key_insights && rep.key_insights.length) {
       wrap.append(reportSection("Key insights"));
       wrap.append(el("div", { class: "insights" }, ...rep.key_insights.map(insightCard)));
+    }
+    if ((rep.evidence && rep.evidence.length) || (rep.counter_evidence && rep.counter_evidence.length)) {
+      wrap.append(reportSection("Evidence"));
+      wrap.append(evidenceGrid(rep));
+    }
+    if (rep.confidence_reasons && rep.confidence_reasons.length) {
+      wrap.append(reportSection("Confidence"));
+      wrap.append(bulletPanel(rep.confidence_reasons));
     }
     if (rep.data_quality && rep.data_quality.length) {
       wrap.append(reportSection("Data quality"));
@@ -641,15 +695,59 @@
       wrap.append(reportSection("Recommendations"));
       wrap.append(el("div", { class: "recs" }, ...rep.recommendations.map(recCard)));
     }
+    if (rep.metrics_to_track && rep.metrics_to_track.length) {
+      wrap.append(reportSection("Metrics to track"));
+      wrap.append(el("div", { class: "metric-tags" }, ...rep.metrics_to_track.map((m) => el("span", {}, m))));
+    }
+    if (rep.next_best_questions && rep.next_best_questions.length) {
+      wrap.append(reportSection("Next best questions"));
+      wrap.append(followups(rep.next_best_questions));
+    }
     if (rep.caveats && rep.caveats.length) {
       wrap.append(el("details", { class: "caveats" },
         el("summary", {}, "Caveats & limitations"),
         el("ul", {}, ...rep.caveats.map((c) => el("li", {}, c)))
       ));
     }
+    if (r.context) wrap.append(contextBox(r.context));
     wrap.append(el("div", { class: "report-foot" },
       "Generated by " + (rep.generated_by || "your AI CLI") + " · commentary over Insyte-computed figures"));
     return wrap;
+  }
+
+  function evidenceGrid(rep) {
+    return el("div", { class: "evidence-grid" },
+      rep.evidence && rep.evidence.length ? el("div", { class: "ev-panel" },
+        el("div", { class: "ev-title" }, "Supports"),
+        el("ul", {}, ...rep.evidence.map((e) => el("li", {}, e)))
+      ) : null,
+      rep.counter_evidence && rep.counter_evidence.length ? el("div", { class: "ev-panel counter" },
+        el("div", { class: "ev-title" }, "Complicates"),
+        el("ul", {}, ...rep.counter_evidence.map((e) => el("li", {}, e)))
+      ) : null
+    );
+  }
+
+  function bulletPanel(items) {
+    return el("ul", { class: "bullet-panel" }, ...items.map((item) => el("li", {}, item)));
+  }
+
+  function contextBox(ctx) {
+    const items = [];
+    if (ctx.active_metric) items.push(["Metric", ctx.active_metric]);
+    if (ctx.active_dimension) items.push(["Dimension", ctx.active_dimension]);
+    if (ctx.active_period) items.push(["Period", ctx.active_period]);
+    if (ctx.active_report_mode) items.push(["Mode", ctx.active_report_mode]);
+    if (!items.length && !(ctx.unresolved_assumptions && ctx.unresolved_assumptions.length)) return null;
+    return el("details", { class: "context-box" },
+      el("summary", {}, "Context used for follow-ups"),
+      el("div", { class: "ctx-grid" }, ...items.map(([k, v]) =>
+        el("div", { class: "ctx-item" }, el("span", {}, k), el("b", {}, v))
+      )),
+      ctx.unresolved_assumptions && ctx.unresolved_assumptions.length
+        ? el("ul", { class: "ctx-assumptions" }, ...ctx.unresolved_assumptions.map((a) => el("li", {}, a)))
+        : null
+    );
   }
 
   // Charts are derived only from the real result — never from anything the model returned.
@@ -659,20 +757,28 @@
       cards.push(chartCard(r.charts[0].title || "Overview", chartTab(r.charts[0])));
     }
     if (r.contributors && r.contributors.length > 1) {
-      cards.push(chartCard("Contribution share", shareChart(r.contributors)));
+      cards.push(chartCard(
+        "Contribution share",
+        chartFrame("Contribution share", () => shareChart(r.contributors))
+      ));
     }
     const spec = r.charts && r.charts[0];
     if (spec && spec.type === "line" && spec.series && spec.series[0]) {
       const key = spec.series[0].key;
       const labels = (spec.data || []).map((d) => String(d[spec.x_key]));
       const values = (spec.data || []).map((d) => Number(d[key]) || 0);
-      if (values.length > 1) cards.push(chartCard("Period-over-period growth", growthBars(labels, values)));
+      if (values.length > 1) {
+        cards.push(chartCard(
+          "Period-over-period growth",
+          chartFrame("Period-over-period growth", () => growthBars(labels, values))
+        ));
+      }
     }
     return cards;
   }
 
   function chartCard(title, body) {
-    return el("div", { class: "chart-card" }, el("div", { class: "cc-title" }, title), body);
+    return el("div", { class: "chart-card", "aria-label": title }, body);
   }
 
   function shareChart(contributors) {
@@ -770,49 +876,195 @@
 
   // ---- inline SVG chart ------------------------------------------------------------------
   function chartTab(spec) {
-    const wrap = el("div", { class: "chart-wrap" });
     const data = spec.data || [];
     const key = spec.series && spec.series[0] ? spec.series[0].key : null;
     if (!key || !data.length) return el("div", { class: "muted" }, "No chart.");
-    const labels = data.map((d) => String(d[spec.x_key]));
+    const labels = data.map((d) => formatChartLabel(d[spec.x_key]));
     const values = data.map((d) => Number(d[key]) || 0);
-    wrap.append(spec.type === "line" ? lineChart(labels, values) : barChart(labels, values));
-    return wrap;
+    const seriesLabel = spec.series[0].label || key;
+    return chartFrame(
+      spec.title || "Chart",
+      () => spec.type === "line"
+        ? lineChart(labels, values, seriesLabel)
+        : barChart(labels, values, seriesLabel)
+    );
   }
 
-  const W = 760, H = 240, PAD = 34;
+  function chartFrame(title, render, options) {
+    const body = el("div", { class: "chart-wrap" }, render());
+    const btn = options && options.modal ? null : el("button", { class: "chart-expand", title: "Expand chart", "aria-label": "Expand chart" }, "⛶");
+    if (btn) btn.addEventListener("click", () => openChartFullscreen(title, render));
+    return el("div", { class: "chart-shell" },
+      el("div", { class: "chart-toolbar" },
+        el("span", { class: "chart-title", title }, title),
+        btn
+      ),
+      body
+    );
+  }
+
+  function openChartFullscreen(title, render) {
+    const close = el("button", { class: "chart-close", title: "Close chart", "aria-label": "Close chart" }, "×");
+    const overlay = el("div", { class: "chart-modal" },
+      el("div", { class: "chart-modal-panel" },
+        el("div", { class: "chart-modal-head" },
+          el("div", { class: "chart-modal-title" }, title),
+          close
+        ),
+        el("div", { class: "chart-modal-body" }, chartFrame(title, render, { modal: true }))
+      )
+    );
+    const done = () => {
+      document.removeEventListener("keydown", onKey);
+      overlay.remove();
+    };
+    const onKey = (e) => { if (e.key === "Escape") done(); };
+    close.addEventListener("click", done);
+    overlay.addEventListener("click", (e) => { if (e.target === overlay) done(); });
+    document.addEventListener("keydown", onKey);
+    document.body.append(overlay);
+  }
+
+  const W = 760, H = 260, PAD = 42;
   function svgNode(tag, attrs) {
     const n = document.createElementNS("http://www.w3.org/2000/svg", tag);
     for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
     return n;
   }
-  function scaleY(v, max) { return H - PAD - (max ? (v / max) * (H - 2 * PAD) : 0); }
+  function scaleY(v, min, max) {
+    const range = max - min || 1;
+    return H - PAD - ((v - min) / range) * (H - 2 * PAD);
+  }
+  function chartBounds(values) {
+    const rawMin = Math.min(...values, 0);
+    const rawMax = Math.max(...values, 1);
+    const pad = Math.max((rawMax - rawMin) * 0.12, rawMax === rawMin ? Math.abs(rawMax) * 0.08 : 0);
+    return { min: Math.min(0, rawMin - pad), max: rawMax + pad };
+  }
+  function grid(svg, min, max) {
+    [0, 0.5, 1].forEach((ratio) => {
+      const y = PAD + (H - 2 * PAD) * ratio;
+      svg.append(svgNode("line", { class: "grid-line", x1: PAD, y1: y, x2: W - 16, y2: y }));
+    });
+    const maxLabel = svgNode("text", { class: "axis-label", x: PAD, y: PAD - 10 });
+    maxLabel.textContent = compact(max);
+    svg.append(maxLabel);
+    const minLabel = svgNode("text", { class: "axis-label", x: PAD, y: H - 10 });
+    minLabel.textContent = compact(min);
+    svg.append(minLabel);
+  }
+  function formatChartLabel(value) {
+    const text = String(value ?? "");
+    const date = new Date(text);
+    if (!Number.isNaN(date.getTime()) && /^\d{4}-\d{2}-\d{2}/.test(text)) {
+      return date.toLocaleDateString(undefined, { month: "short", year: "2-digit" });
+    }
+    return text;
+  }
+  function tooltip(svg, label, value, x, y, key) {
+    const group = svgNode("g", { class: "chart-tip", opacity: "0", "pointer-events": "none" });
+    const text = svgNode("text", { x: 0, y: 0 });
+    text.append(svgText(label, 0, 0, "tip-label"));
+    text.append(svgText((key ? key + ": " : "") + compact(value), 0, 15, "tip-value"));
+    const valueText = (key ? key + ": " : "") + compact(value);
+    const width = Math.max(88, Math.min(170, Math.max(label.length, valueText.length) * 6.4 + 22));
+    const tx = Math.min(W - width - 10, Math.max(10, x - width / 2));
+    const ty = y < 82 ? y + 42 : y - 44;
+    group.setAttribute("transform", "translate(" + tx + "," + ty + ")");
+    group.append(svgNode("rect", { class: "tip-bg", x: 0, y: -14, width, height: 36, rx: 6 }));
+    group.append(text);
+    svg.append(group);
+    return group;
+  }
+  function svgText(text, x, y, cls) {
+    const t = svgNode("tspan", { x, y, class: cls });
+    t.textContent = text;
+    return t;
+  }
+  function hoverTarget(node, tip) {
+    node.addEventListener("mouseenter", () => tip.setAttribute("opacity", "1"));
+    node.addEventListener("mouseleave", () => tip.setAttribute("opacity", "0"));
+    node.addEventListener("focus", () => tip.setAttribute("opacity", "1"));
+    node.addEventListener("blur", () => tip.setAttribute("opacity", "0"));
+  }
 
-  function barChart(labels, values) {
-    const max = Math.max(...values, 1);
-    const svg = svgNode("svg", { viewBox: "0 0 " + W + " " + H, width: "100%", height: H });
-    svg.append(svgNode("line", { class: "axis", x1: PAD, y1: H - PAD, x2: W - 8, y2: H - PAD }));
+  function barChart(labels, values, key) {
+    const { min, max } = chartBounds(values);
+    const svg = svgNode("svg", { class: "insyte-chart", viewBox: "0 0 " + W + " " + H, width: "100%", height: H });
+    grid(svg, min, max);
+    svg.append(svgNode("line", { class: "axis", x1: PAD, y1: H - PAD, x2: W - 16, y2: H - PAD }));
     const bw = (W - PAD - 12) / labels.length;
     labels.forEach((lab, i) => {
       const x = PAD + i * bw + bw * 0.15;
-      const y = scaleY(values[i], max);
-      svg.append(svgNode("rect", { class: "bar", x, y, width: bw * 0.7, height: H - PAD - y, rx: 3 }));
-      const t = svgNode("text", { x: x + bw * 0.35, y: H - PAD + 12, "text-anchor": "middle" });
-      t.textContent = lab.length > 10 ? lab.slice(0, 9) + "…" : lab;
-      svg.append(t);
+      const y = scaleY(values[i], min, max);
+      const bar = svgNode("rect", {
+        class: "bar",
+        x,
+        y,
+        width: bw * 0.7,
+        height: H - PAD - y,
+        rx: 5,
+        tabindex: 0,
+      });
+      const tip = tooltip(svg, lab, values[i], x + bw * 0.35, y, key);
+      hoverTarget(bar, tip);
+      svg.append(bar);
+      if (labels.length <= 12 || i % Math.ceil(labels.length / 8) === 0) {
+        const t = svgNode("text", { x: x + bw * 0.35, y: H - PAD + 16, "text-anchor": "middle" });
+        t.textContent = lab.length > 8 ? lab.slice(0, 7) + "…" : lab;
+        svg.append(t);
+      }
+      svg.append(tip);
     });
     return svg;
   }
 
-  function lineChart(labels, values) {
-    const max = Math.max(...values, 1);
-    const svg = svgNode("svg", { viewBox: "0 0 " + W + " " + H, width: "100%", height: H });
-    svg.append(svgNode("line", { class: "axis", x1: PAD, y1: H - PAD, x2: W - 8, y2: H - PAD }));
+  function lineChart(labels, values, key) {
+    const { min, max } = chartBounds(values);
+    const svg = svgNode("svg", { class: "insyte-chart", viewBox: "0 0 " + W + " " + H, width: "100%", height: H });
+    grid(svg, min, max);
+    svg.append(svgNode("line", { class: "axis", x1: PAD, y1: H - PAD, x2: W - 16, y2: H - PAD }));
     const step = labels.length > 1 ? (W - PAD - 12) / (labels.length - 1) : 0;
-    const pts = values.map((v, i) => (PAD + i * step) + "," + scaleY(v, max));
-    svg.append(svgNode("polyline", { class: "line", points: pts.join(" ") }));
-    values.forEach((v, i) => svg.append(svgNode("circle", { class: "dot", cx: PAD + i * step, cy: scaleY(v, max), r: 3 })));
+    const points = values.map((v, i) => [PAD + i * step, scaleY(v, min, max)]);
+    const linePath = smoothPath(points);
+    const areaPath = linePath + " L " + points[points.length - 1][0] + " " + (H - PAD) +
+      " L " + points[0][0] + " " + (H - PAD) + " Z";
+    svg.append(svgNode("path", { class: "area", d: areaPath }));
+    svg.append(svgNode("path", { class: "line", d: linePath }));
+    values.forEach((v, i) => {
+      const x = points[i][0], y = points[i][1];
+      if (labels.length <= 12 || i % Math.ceil(labels.length / 8) === 0) {
+        const t = svgNode("text", { x, y: H - PAD + 16, "text-anchor": "middle" });
+        t.textContent = labels[i].length > 8 ? labels[i].slice(0, 7) + "…" : labels[i];
+        svg.append(t);
+      }
+      const dot = svgNode("circle", { class: "dot", cx: x, cy: y, r: 4, tabindex: 0 });
+      const hit = svgNode("circle", { class: "dot-hit", cx: x, cy: y, r: 13, tabindex: 0 });
+      const tip = tooltip(svg, labels[i], v, x, y, key);
+      hoverTarget(dot, tip);
+      hoverTarget(hit, tip);
+      svg.append(dot, hit);
+      svg.append(tip);
+    });
     return svg;
+  }
+
+  function smoothPath(points) {
+    if (!points.length) return "";
+    if (points.length === 1) return "M " + points[0][0] + " " + points[0][1];
+    let d = "M " + points[0][0] + " " + points[0][1];
+    for (let i = 0; i < points.length - 1; i++) {
+      const p0 = points[Math.max(0, i - 1)];
+      const p1 = points[i];
+      const p2 = points[i + 1];
+      const p3 = points[Math.min(points.length - 1, i + 2)];
+      const cp1x = p1[0] + (p2[0] - p0[0]) / 6;
+      const cp1y = p1[1] + (p2[1] - p0[1]) / 6;
+      const cp2x = p2[0] - (p3[0] - p1[0]) / 6;
+      const cp2y = p2[1] - (p3[1] - p1[1]) / 6;
+      d += " C " + cp1x + " " + cp1y + ", " + cp2x + " " + cp2y + ", " + p2[0] + " " + p2[1];
+    }
+    return d;
   }
 
   // ---- other pages -----------------------------------------------------------------------

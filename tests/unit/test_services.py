@@ -120,6 +120,11 @@ def test_conversation_service_roundtrip(metadata: MetadataRepository) -> None:
     service.save_analysis("an_1", "Show revenue", "Revenue is up", '{"summary": "Revenue is up"}')
     assert '"summary"' in (service.get_analysis("an_1") or "")
 
+    from insyte.studio.context import ChatContext
+
+    service.save_context(conversation.id, ChatContext(active_metric="revenue"), "an_1")
+    assert service.latest_context(conversation.id).active_metric == "revenue"
+
     assert service.delete(conversation.id) is True
     assert service.list_all() == []
 

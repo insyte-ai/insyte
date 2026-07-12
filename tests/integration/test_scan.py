@@ -10,10 +10,10 @@ import os
 from pathlib import Path
 
 import pytest
-from sqlalchemy import create_engine, text
+from helpers import load_ecommerce_fixture
 
 from insyte.config.models import DatabaseSection, QuerySection, SSLMode
-from insyte.connectors.postgres import PostgresConnector, normalize_postgres_url
+from insyte.connectors.postgres import PostgresConnector
 from insyte.metadata.models import RelationshipKind, TableCategory, TableKind
 from insyte.metadata.scanner import SchemaScanner
 
@@ -28,12 +28,7 @@ pytestmark = pytest.mark.skipif(
 @pytest.fixture(scope="module")
 def scanned():
     assert _TEST_URL is not None
-    engine = create_engine(normalize_postgres_url(_TEST_URL))
-    with engine.begin() as conn:
-        for statement in _FIXTURE.read_text().split(";\n"):
-            if statement.strip():
-                conn.execute(text(statement))
-    engine.dispose()
+    load_ecommerce_fixture(_TEST_URL, _FIXTURE)
 
     connector = PostgresConnector(
         _TEST_URL, DatabaseSection(ssl_mode=SSLMode.prefer), QuerySection()

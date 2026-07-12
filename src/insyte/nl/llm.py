@@ -108,6 +108,7 @@ def build_prompt(
     *,
     now: datetime | None = None,
     history: list[tuple[str, str]] | None = None,
+    context: str | None = None,
 ) -> str:
     """Construct the translation prompt (metric/dimension names, recent turns, the question)."""
 
@@ -119,6 +120,13 @@ def build_prompt(
             "\nRecent conversation (oldest first) — use it to resolve follow-ups like "
             '"in that period", "what about last year", or "and by city":\n'
             f"{turns}\n"
+        )
+    context_block = ""
+    if context:
+        context_block = (
+            "\nStructured context from the previous analyses — use this to resolve short "
+            'follow-ups like "same period", "that metric", or "by city":\n'
+            f"{context}\n"
         )
     metrics = "\n".join(
         f"  - {name}: {m.label or name}" for name, m in sorted(layer.metrics.items())
@@ -165,6 +173,7 @@ def build_prompt(
         "OR\n"
         '{"kind": "message", "text": "<short helpful reply>"}\n'
         f"{conversation}\n"
+        f"{context_block}\n"
         f"Question: {question}"
     )
 
@@ -379,10 +388,11 @@ def resolve(
     now: datetime | None = None,
     timeout: float | None = None,
     history: list[tuple[str, str]] | None = None,
+    context: str | None = None,
 ) -> NLResolution | None:
     """Run the local AI CLI to translate ``question``; return ``None`` on any failure."""
 
-    prompt = build_prompt(question, layer, now=now, history=history)
+    prompt = build_prompt(question, layer, now=now, history=history, context=context)
     out = _run(backend, prompt, timeout or _TIMEOUT_SECONDS)
     if out is None:
         return None
@@ -402,7 +412,18 @@ def resolve(
 _persona_cache: str | None = None
 
 _REPORT_LIST_KEYS = frozenset(
-    {"key_insights", "data_quality", "risks", "recommendations", "caveats"}
+    {
+        "key_insights",
+        "data_quality",
+        "risks",
+        "recommendations",
+        "caveats",
+        "evidence",
+        "counter_evidence",
+        "confidence_reasons",
+        "next_best_questions",
+        "metrics_to_track",
+    }
 )
 _REPORT_OBJECT_KEYS = frozenset({"root_cause", "business_impact", "forecast"})
 
@@ -454,7 +475,7 @@ def _extract_report_json(text: str) -> dict | None:
     if not objects:
         return None
     for obj in reversed(objects):
-        if "executive_summary" in obj or "key_insights" in obj:
+        if "tl_dr" in obj or "executive_summary" in obj or "key_insights" in obj:
             return obj
     return objects[-1]
 
@@ -481,7 +502,11 @@ def _validate_report(data: dict, backend_name: str) -> DetailedReport | None:
         return None
     report.generated_by = backend_name
     # An empty shell (no summary, no insights) is not worth showing — let the result stand alone.
-    if not report.executive_summary.strip() and not report.key_insights:
+    if (
+        not report.tl_dr.strip()
+        and not report.executive_summary.strip()
+        and not report.key_insights
+    ):
         return None
     return report
 

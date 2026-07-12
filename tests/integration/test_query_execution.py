@@ -10,7 +10,8 @@ import os
 from pathlib import Path
 
 import pytest
-from sqlalchemy import create_engine, text
+from helpers import load_ecommerce_fixture
+from sqlalchemy import text
 
 from insyte.config.models import (
     DatabaseSection,
@@ -19,7 +20,7 @@ from insyte.config.models import (
     QuerySection,
     SSLMode,
 )
-from insyte.connectors.postgres import PostgresConnector, normalize_postgres_url
+from insyte.connectors.postgres import PostgresConnector
 from insyte.exceptions import QueryValidationError
 from insyte.query.executor import QueryExecutor
 from insyte.query.models import QueryHistoryEntry, SecurityEventEntry
@@ -47,12 +48,7 @@ class _Recorder:
 @pytest.fixture(scope="module")
 def executor():
     assert _TEST_URL is not None
-    engine = create_engine(normalize_postgres_url(_TEST_URL))
-    with engine.begin() as conn:
-        for statement in _FIXTURE.read_text().split(";\n"):
-            if statement.strip():
-                conn.execute(text(statement))
-    engine.dispose()
+    load_ecommerce_fixture(_TEST_URL, _FIXTURE)
 
     config = InsyteConfig(
         project=ProjectSection(name="it"),

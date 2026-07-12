@@ -25,6 +25,8 @@ uncertainty, and recommend action.
 - The user's question and the metric definition (name, label, format — currency is Indian ₹,
   read large numbers as crore/lakh).
 - The **aggregated result** of the query (already row-limited and PII-masked): columns + rows.
+- Deterministic insight helpers: trend deltas, contribution concentration, outlier flags, data
+  thinness warnings, and freshness warnings when available.
 - **Data-quality flags** Insyte computed deterministically (null rates, duplicates, PII columns,
   freshness). Treat these as ground truth and interpret their business impact.
 - A **deterministic forecast** (expected / best / worst bands) when the question is
@@ -48,7 +50,12 @@ uncertainty, and recommend action.
 
 ```json
 {
+  "tl_dr": "one-sentence answer to the user's question.",
+  "decision": "clear recommended decision or empty string when the data is descriptive only.",
   "executive_summary": "2-4 sentence decision-ready summary for a busy executive.",
+  "evidence": ["specific facts from the payload that support the decision"],
+  "counter_evidence": ["specific facts that weaken or complicate the decision"],
+  "confidence_reasons": ["why confidence is high/medium/low based only on the payload"],
   "key_insights": [
     {
       "title": "short insight headline",
@@ -78,6 +85,8 @@ uncertainty, and recommend action.
     {"action": "", "horizon": "immediate|short|long", "priority": "high|medium|low",
      "expected_impact": "", "est_roi": ""}
   ],
+  "next_best_questions": ["follow-up analysis questions grounded in the current metric/context"],
+  "metrics_to_track": ["metric names or labels from the payload worth monitoring"],
   "caveats": ["limits of this analysis, missing variables, sample-size concerns"],
   "confidence_overall": "high|medium|low"
 }

@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from insyte.services.project_service import ProjectServices
+from insyte.studio.context import ChatContext
 from insyte.studio.dependencies import get_analysis_factory, get_pending, get_services
 from insyte.studio.events import AnalysisFactory, sse, stream_analysis
 from insyte.studio.schemas import AnalysisResult
@@ -53,11 +54,13 @@ def analysis_events(
     # Prior turns (excluding the just-added current question) give the resolver context for
     # follow-ups like "in that period" or "and by city".
     history: list[tuple[str, str]] = []
+    chat_context = None
     if conversation_id:
         prior = services.conversations.messages(conversation_id)
         history = [(m.role, m.content) for m in prior[:-1]][-6:]
+        chat_context = services.conversations.latest_context(conversation_id)
 
-    def on_complete(result: AnalysisResult) -> None:
+    def on_complete(result: AnalysisResult, context: ChatContext | None) -> None:
         services.conversations.save_analysis(
             analysis_id,
             job["question"],
@@ -68,6 +71,8 @@ def analysis_events(
         services.conversations.add_message(
             conversation_id, "assistant", result.summary, analysis_id
         )
+        if context is not None:
+            services.conversations.save_context(conversation_id, context, analysis_id)
 
     stream = stream_analysis(
         analysis_id=analysis_id,
@@ -78,6 +83,7 @@ def analysis_events(
         analysis_factory=analysis_factory,
         on_complete=on_complete,
         history=history,
+        chat_context=chat_context,
         detailed=bool(job.get("detailed", False)),
     )
     return StreamingResponse(stream, media_type="text/event-stream")

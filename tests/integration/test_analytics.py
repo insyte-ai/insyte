@@ -10,7 +10,7 @@ import os
 from pathlib import Path
 
 import pytest
-from sqlalchemy import create_engine, text
+from helpers import load_ecommerce_fixture
 
 from insyte.analytics.engine import AnalyticsEngine
 from insyte.analytics.models import AnalysisKind, ChartType, TimeGrain
@@ -21,7 +21,7 @@ from insyte.config.models import (
     QuerySection,
     SSLMode,
 )
-from insyte.connectors.postgres import PostgresConnector, normalize_postgres_url
+from insyte.connectors.postgres import PostgresConnector
 from insyte.metadata.repository import MetadataRepository, utcnow
 from insyte.metadata.scanner import SchemaScanner
 from insyte.query.executor import QueryExecutor
@@ -38,12 +38,7 @@ pytestmark = pytest.mark.skipif(
 @pytest.fixture(scope="module")
 def engine(tmp_path_factory: pytest.TempPathFactory):
     assert _TEST_URL is not None
-    src = create_engine(normalize_postgres_url(_TEST_URL))
-    with src.begin() as conn:
-        for statement in (_FIXTURES / "ecommerce.sql").read_text().split(";\n"):
-            if statement.strip():
-                conn.execute(text(statement))
-    src.dispose()
+    load_ecommerce_fixture(_TEST_URL, _FIXTURES / "ecommerce.sql")
 
     config = InsyteConfig(
         project=ProjectSection(name="it"),

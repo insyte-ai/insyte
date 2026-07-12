@@ -26,6 +26,8 @@ from insyte.nl.periods import period_from_token
 from insyte.semantic.models import Metric, MetricFormat, SemanticLayer
 from insyte.services.analysis_service import AnalysisService
 from insyte.services.schema_service import SchemaService
+from insyte.studio.context import ChatContext, build_chat_context
+from insyte.studio.investigation import InvestigationService, is_investigation_question
 from insyte.studio.schemas import (
     AnalysisResult,
     DataFreshness,
@@ -63,15 +65,19 @@ def stream_analysis(
     config: InsyteConfig,
     schema: SchemaService,
     analysis_factory: AnalysisFactory,
-    on_complete: Callable[[AnalysisResult], None],
+    on_complete: Callable[[AnalysisResult, ChatContext | None], None],
     history: list[tuple[str, str]] | None = None,
+    chat_context: ChatContext | None = None,
     detailed: bool = False,
 ) -> Iterator[str]:
     """Yield SSE strings for an analysis and persist the final result via ``on_complete``."""
 
     yield sse("question_received", {"analysis_id": analysis_id})
     intent = parse_intent(question, layer)
-    yield sse("context_resolved", {})
+    yield sse(
+        "context_resolved",
+        {"context": chat_context.to_dict() if chat_context is not None else None},
+    )
 
     period: Period | None = None
     if intent.kind is not IntentKind.analysis or intent.metric is None:
@@ -83,7 +89,13 @@ def stream_analysis(
         if backends:
             yield sse("ai_resolving", {"backend": backends[0].name})
             for backend in backends:
-                resolution = resolve(question, layer, backend, history=history)
+                resolution = resolve(
+                    question,
+                    layer,
+                    backend,
+                    history=history,
+                    context=chat_context.prompt_summary() if chat_context else None,
+                )
                 if resolution is not None:
                     break
 
@@ -93,7 +105,11 @@ def stream_analysis(
                 "I couldn't identify a metric in that question.",
                 suggested=_suggestions(layer),
             )
-            on_complete(result)
+            context = _final_context(
+                question, result, chat_context, intent, period, detailed=detailed
+            )
+            result.context = context.to_dict()
+            on_complete(result, context)
             yield sse("response_completed", {"result": result.model_dump(mode="json")})
             return
 
@@ -104,7 +120,11 @@ def stream_analysis(
                 status="message",
                 suggested=_suggestions(layer),
             )
-            on_complete(result)
+            context = _final_context(
+                question, result, chat_context, intent, period, detailed=detailed
+            )
+            result.context = context.to_dict()
+            on_complete(result, context)
             yield sse("response_completed", {"result": result.model_dump(mode="json")})
             return
 
@@ -126,6 +146,43 @@ def stream_analysis(
     data_freshness = freshness(config, schema)
     analysis, connector = analysis_factory()
     try:
+        if is_investigation_question(question, intent):
+            service = InvestigationService(
+                analysis,
+                layer,
+                data_freshness,
+                _suggestions(layer),
+                profiles=schema.column_profiles(),
+            )
+            plan = service.plan(question, intent)
+            yield sse("investigation_planned", {"plan": plan.model_dump(mode="json")})
+            final_result: AnalysisResult | None = None
+            for item in service.run(
+                analysis_id=analysis_id,
+                plan=plan,
+                emit=sse,
+                detailed=detailed,
+                report_backends=available_backends(config.ai.studio_backend) if detailed else [],
+            ):
+                if isinstance(item, str):
+                    yield item
+                else:
+                    final_result = item
+            if final_result is None:
+                final_result = studio_result_message(
+                    analysis_id,
+                    "I couldn't complete the investigation.",
+                    status="error",
+                    suggested=_suggestions(layer),
+                )
+            context = _final_context(
+                question, final_result, chat_context, intent, period, detailed=detailed
+            )
+            final_result.context = context.to_dict()
+            on_complete(final_result, context)
+            yield sse("response_completed", {"result": final_result.model_dump(mode="json")})
+            return
+
         yield sse("sql_generated", {})
         yield sse("sql_validated", {})
         yield sse("query_started", {})
@@ -135,7 +192,11 @@ def stream_analysis(
             )
         except QueryValidationError as exc:
             result = studio_result_blocked(analysis_id, exc.violations)
-            on_complete(result)
+            context = _final_context(
+                question, result, chat_context, intent, period, detailed=detailed
+            )
+            result.context = context.to_dict()
+            on_complete(result, context)
             yield sse("query_blocked", {"violations": exc.violations})
             yield sse("response_completed", {"result": result.model_dump(mode="json")})
             return
@@ -143,7 +204,11 @@ def stream_analysis(
             result = studio_result_message(
                 analysis_id, str(exc), status="error", warnings=[str(exc)]
             )
-            on_complete(result)
+            context = _final_context(
+                question, result, chat_context, intent, period, detailed=detailed
+            )
+            result.context = context.to_dict()
+            on_complete(result, context)
             yield sse("response_completed", {"result": result.model_dump(mode="json")})
             return
 
@@ -168,8 +233,30 @@ def stream_analysis(
             question, result, report_inputs, config, schema, data_freshness
         )
 
-    on_complete(result)
+    context = _final_context(question, result, chat_context, intent, period, detailed=detailed)
+    result.context = context.to_dict()
+    on_complete(result, context)
     yield sse("response_completed", {"result": result.model_dump(mode="json")})
+
+
+def _final_context(
+    question: str,
+    result: AnalysisResult,
+    previous: ChatContext | None,
+    intent: Intent,
+    period: Period | None,
+    *,
+    detailed: bool,
+) -> ChatContext:
+    return build_chat_context(
+        question=question,
+        result=result,
+        previous=previous,
+        active_metric=intent.metric,
+        active_dimension=intent.dimension,
+        active_period=period.label if period else previous.active_period if previous else None,
+        detailed=detailed,
+    )
 
 
 @dataclass

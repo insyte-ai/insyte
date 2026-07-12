@@ -24,6 +24,8 @@ from insyte.metadata.models import (
     ColumnProfileRecord,
     ColumnRecord,
     Conversation,
+    ConversationContextSnapshot,
+    ConversationContextSnapshotRecord,
     ConversationMessage,
     ConversationMessageRecord,
     ConversationRecord,
@@ -459,6 +461,11 @@ class MetadataRepository:
                     ConversationMessageRecord.conversation_id == conversation_id
                 )
             )
+            session.execute(
+                delete(ConversationContextSnapshotRecord).where(
+                    ConversationContextSnapshotRecord.conversation_id == conversation_id
+                )
+            )
             session.delete(record)
             return True
 
@@ -489,6 +496,34 @@ class MetadataRepository:
                 .order_by(ConversationMessageRecord.id)
             ).scalars()
             return [_message(r) for r in records]
+
+    def save_context_snapshot(
+        self, conversation_id: str, analysis_id: str | None, context_json: dict
+    ) -> ConversationContextSnapshot:
+        now = utcnow()
+        with Session(self._engine) as session, session.begin():
+            record = ConversationContextSnapshotRecord(
+                conversation_id=conversation_id,
+                analysis_id=analysis_id,
+                context_json=context_json,
+                created_at=now,
+            )
+            session.add(record)
+            session.flush()
+            return _context_snapshot(record)
+
+    def latest_context_snapshot(self, conversation_id: str) -> ConversationContextSnapshot | None:
+        with Session(self._engine) as session:
+            record = (
+                session.execute(
+                    select(ConversationContextSnapshotRecord)
+                    .where(ConversationContextSnapshotRecord.conversation_id == conversation_id)
+                    .order_by(ConversationContextSnapshotRecord.id.desc())
+                )
+                .scalars()
+                .first()
+            )
+            return _context_snapshot(record) if record is not None else None
 
     def save_analysis_result(
         self,
@@ -597,6 +632,16 @@ def _message(record: ConversationMessageRecord) -> ConversationMessage:
         role=record.role,
         content=record.content,
         analysis_id=record.analysis_id,
+        created_at=record.created_at,
+    )
+
+
+def _context_snapshot(record: ConversationContextSnapshotRecord) -> ConversationContextSnapshot:
+    return ConversationContextSnapshot(
+        id=record.id,
+        conversation_id=record.conversation_id,
+        analysis_id=record.analysis_id,
+        context_json=dict(record.context_json),
         created_at=record.created_at,
     )
 

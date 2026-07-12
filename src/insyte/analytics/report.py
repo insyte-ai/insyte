@@ -9,7 +9,7 @@ network, so it is fully unit-testable and can never leak raw rows or credentials
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 
 from insyte.analytics.charts import format_value
 from insyte.analytics.forecast import project_current_year
@@ -25,6 +25,9 @@ _NULL_WARNING = 0.2
 _NULL_CRITICAL = 0.5
 _DUPLICATE_NOTABLE = 0.5
 _RUN_RATE_MONTHS = 3
+_THIN_ROWS = 3
+_FRESHNESS_WARNING_DAYS = 7
+_FRESHNESS_STALE_DAYS = 30
 
 
 def build_report_context(
@@ -70,13 +73,18 @@ def build_report_context(
             }
             for c in domain.contributors[:10]
         ],
+        "contribution_summary": contribution_summary(domain),
+        "outliers": outlier_flags(domain, fmt),
+        "data_thinness": data_thinness_warnings(domain),
         "data_quality": data_quality_flags(profiles, tables),
         "freshness": {
             "mode": freshness_mode,
             "last_scan": last_scan.isoformat() if last_scan else None,
+            "warnings": freshness_warnings(last_scan, now or datetime.now(), freshness_mode),
         },
     }
     if trend is not None and trend.rows:
+        payload["trend_deltas"] = trend_deltas(trend, fmt)
         payload["trend_series"] = {
             "grain": "month",
             "columns": list(trend.columns),
@@ -89,6 +97,107 @@ def build_report_context(
     if forecast_points:
         payload["forecast"] = forecast_bands(forecast_points, now or datetime.now(), fmt)
     return payload
+
+
+def contribution_summary(domain: DomainAnalysisResult) -> dict:
+    """Top-3/top-5 contribution concentration over already-aggregated contributors."""
+
+    contributors = sorted(domain.contributors, key=lambda c: c.share, reverse=True)
+    return {
+        "top_3_share_pct": round(sum(c.share for c in contributors[:3]) * 100, 2),
+        "top_5_share_pct": round(sum(c.share for c in contributors[:5]) * 100, 2),
+        "contributor_count": len(contributors),
+    }
+
+
+def trend_deltas(domain: DomainAnalysisResult, fmt: MetricFormat) -> dict | None:
+    """Latest-vs-prior deltas for a trend result."""
+
+    numeric: list[tuple[object, float]] = []
+    for row in domain.rows:
+        if len(row) < 2:
+            continue
+        value = _float_or_none(row[1])
+        if value is not None:
+            numeric.append((row[0], value))
+    if len(numeric) < 2:
+        return None
+    previous_label, previous = numeric[-2]
+    latest_label, latest = numeric[-1]
+    absolute = latest - previous
+    percent = (absolute / previous * 100) if previous else None
+    return {
+        "latest_period": _scalar(latest_label),
+        "previous_period": _scalar(previous_label),
+        "latest_value": round(latest, 4),
+        "latest_value_formatted": format_value(latest, fmt),
+        "previous_value": round(previous, 4),
+        "previous_value_formatted": format_value(previous, fmt),
+        "absolute_change": round(absolute, 4),
+        "absolute_change_formatted": format_value(absolute, fmt),
+        "percent_change": round(percent, 2) if percent is not None else None,
+    }
+
+
+def outlier_flags(domain: DomainAnalysisResult, fmt: MetricFormat) -> list[dict]:
+    """Simple z-score outlier flags over aggregate result values."""
+
+    values: list[tuple[object, float]] = []
+    for row in domain.rows:
+        if len(row) < 2:
+            continue
+        value = _float_or_none(row[1])
+        if value is not None:
+            values.append((row[0], value))
+    if len(values) < 4:
+        return []
+    nums = [v for _, v in values]
+    mean = sum(nums) / len(nums)
+    variance = sum((v - mean) ** 2 for v in nums) / len(nums)
+    stddev = variance**0.5
+    if stddev == 0:
+        return []
+    flags = []
+    for label, value in values:
+        z = (value - mean) / stddev
+        if abs(z) >= 1.8:
+            flags.append(
+                {
+                    "segment": str(_scalar(label)),
+                    "value": round(value, 4),
+                    "value_formatted": format_value(value, fmt),
+                    "direction": "high" if z > 0 else "low",
+                    "z_score": round(z, 2),
+                }
+            )
+    return flags[:10]
+
+
+def data_thinness_warnings(domain: DomainAnalysisResult) -> list[str]:
+    warnings: list[str] = []
+    if domain.row_count == 0:
+        warnings.append("No result rows were returned for this analysis.")
+    elif domain.row_count < _THIN_ROWS:
+        warnings.append(
+            f"Only {domain.row_count} aggregated row(s) support this result; "
+            "confidence should be lower."
+        )
+    if domain.contributors and len(domain.contributors) < _THIN_ROWS:
+        warnings.append("Contributor breakdown has fewer than three segments.")
+    return warnings
+
+
+def freshness_warnings(last_scan: datetime | None, now: datetime, mode: str) -> list[str]:
+    if last_scan is None:
+        return ["No schema scan timestamp is available."]
+    last_scan = _normalise_datetime(last_scan)
+    now = _normalise_datetime(now)
+    age_days = (now - last_scan).days
+    if mode != "direct" and age_days >= _FRESHNESS_STALE_DAYS:
+        return [f"Local analytics data may be stale; last scan was {age_days} days ago."]
+    if age_days >= _FRESHNESS_WARNING_DAYS:
+        return [f"Metadata was last scanned {age_days} days ago."]
+    return []
 
 
 def data_quality_flags(profiles: list[ColumnProfile], tables: set[str]) -> list[dict]:
@@ -214,3 +323,16 @@ def _scalar(value: object) -> object:
         return float(value)  # type: ignore[arg-type]
     except (TypeError, ValueError):
         return str(value)
+
+
+def _float_or_none(value: object) -> float | None:
+    try:
+        return float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+
+
+def _normalise_datetime(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)

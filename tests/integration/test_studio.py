@@ -8,11 +8,11 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, text
+from helpers import load_ecommerce_fixture
 
 from insyte.config import loader, paths
 from insyte.config.models import DatabaseSection, InsyteConfig, ProjectSection, SSLMode
-from insyte.connectors.postgres import PostgresConnector, normalize_postgres_url
+from insyte.connectors.postgres import PostgresConnector
 from insyte.metadata.repository import MetadataRepository, utcnow
 from insyte.metadata.scanner import SchemaScanner
 from insyte.services.project_service import ProjectService
@@ -29,12 +29,7 @@ pytestmark = pytest.mark.skipif(
 @pytest.fixture
 def client(isolated_home: Path, monkeypatch: pytest.MonkeyPatch):
     assert _TEST_URL is not None
-    engine = create_engine(normalize_postgres_url(_TEST_URL))
-    with engine.begin() as conn:
-        for statement in (_FIXTURES / "ecommerce.sql").read_text().split(";\n"):
-            if statement.strip():
-                conn.execute(text(statement))
-    engine.dispose()
+    load_ecommerce_fixture(_TEST_URL, _FIXTURES / "ecommerce.sql")
 
     monkeypatch.setenv("INSYTE_DATABASE_URL", _TEST_URL)
     loader.create_project(

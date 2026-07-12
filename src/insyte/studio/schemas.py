@@ -144,7 +144,12 @@ class Recommendation(BaseModel):
 
 
 class DetailedReport(BaseModel):
+    tl_dr: str = ""
+    decision: str = ""
     executive_summary: str = ""
+    evidence: list[str] = Field(default_factory=list)
+    counter_evidence: list[str] = Field(default_factory=list)
+    confidence_reasons: list[str] = Field(default_factory=list)
     key_insights: list[KeyInsight] = Field(default_factory=list)
     data_quality: list[DataQualityFlag] = Field(default_factory=list)
     root_cause: RootCause | None = None
@@ -152,9 +157,38 @@ class DetailedReport(BaseModel):
     forecast: ReportForecast | None = None
     risks: list[RiskItem] = Field(default_factory=list)
     recommendations: list[Recommendation] = Field(default_factory=list)
+    next_best_questions: list[str] = Field(default_factory=list)
+    metrics_to_track: list[str] = Field(default_factory=list)
     caveats: list[str] = Field(default_factory=list)
     confidence_overall: str = "medium"
     generated_by: str = ""  # backend name, e.g. "codex"
+
+
+class InvestigationStep(BaseModel):
+    id: str
+    title: str
+    kind: str
+    status: str = "pending"  # pending | running | completed | skipped | failed
+    key_finding: str = ""
+    result_id: str | None = None
+    limitation: str = ""
+
+
+class InvestigationPlan(BaseModel):
+    question: str
+    metric: str
+    dimension: str | None = None
+    period: str | None = None
+    steps: list[InvestigationStep] = Field(default_factory=list)
+
+
+class InvestigationResult(BaseModel):
+    plan: InvestigationPlan
+    status: str = "completed"
+    summary: str = ""
+    findings: list[str] = Field(default_factory=list)
+    limitations: list[str] = Field(default_factory=list)
+    next_questions: list[str] = Field(default_factory=list)
 
 
 class AnalysisResult(BaseModel):
@@ -174,6 +208,8 @@ class AnalysisResult(BaseModel):
     suggested_questions: list[str] = Field(default_factory=list)
     freshness: DataFreshness | None = None
     report: DetailedReport | None = None
+    investigation: InvestigationResult | None = None
+    context: dict | None = None
 
 
 # --------------------------------------------------------------------------------------------

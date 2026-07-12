@@ -209,6 +209,15 @@ class ConversationMessage:
     created_at: datetime
 
 
+@dataclass
+class ConversationContextSnapshot:
+    id: int
+    conversation_id: str
+    analysis_id: str | None
+    context_json: dict
+    created_at: datetime
+
+
 # --------------------------------------------------------------------------------------------
 # ORM records (persistence model)
 # --------------------------------------------------------------------------------------------
@@ -426,6 +435,16 @@ class ConversationMessageRecord(Base):
     role: Mapped[str]
     content: Mapped[str]
     analysis_id: Mapped[str | None] = mapped_column(default=None)
+    created_at: Mapped[datetime]
+
+
+class ConversationContextSnapshotRecord(Base):
+    __tablename__ = "conversation_context_snapshots"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    conversation_id: Mapped[str] = mapped_column(ForeignKey("conversations.id", ondelete="CASCADE"))
+    analysis_id: Mapped[str | None] = mapped_column(default=None)
+    context_json: Mapped[dict] = mapped_column(JSON)
     created_at: Mapped[datetime]
 
 

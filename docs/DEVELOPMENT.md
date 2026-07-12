@@ -98,7 +98,7 @@ Interfaces (thin, call into `services/`):
 |---|---|
 | `cli/` | Typer commands (one file per command); `app.py` registers them; `main.py` is the entry point. |
 | `tui/` | Textual terminal UI; `controller.py` holds all logic (view-agnostic, unit-testable); `intent.py` is the deterministic NL parser. |
-| `studio/` | FastAPI app (`app.py`), `routes/`, `events.py` (SSE `stream_analysis`), `schemas.py` (typed API models), `static.py`; the bundled SPA lives in `studio_dist/assets/` (`app.js`, `app.css`, logos) — no build step. |
+| `studio/` | FastAPI app (`app.py`), `routes/`, `events.py` (SSE `stream_analysis`), `schemas.py` (typed API models), `context.py` (compact chat context), `investigation.py` (deterministic Investigation Mode Lite), `static.py`; the bundled SPA lives in `studio_dist/assets/` (`app.js`, `app.css`, logos) — no build step. |
 | `mcp/` | MCP server (`server.py` exposes safe tools), `tools.py` (implementations), `installer.py` (wire into Claude/Codex). |
 
 Cross-cutting: `logging_config.py` (JSON logs + credential/PII redaction), `exceptions.py`
@@ -155,7 +155,7 @@ Everything below can be run either as `uv run <cmd>` or, with the venv activated
 ## 7. Running Insyte locally
 
 ```bash
-insyte --version                # 0.2.0
+insyte --version                # 0.2.3
 insyte --help                   # every command
 insyte init                     # guided: read-only DB URL + AI tool → connect, scan, metrics, MCP
 insyte status                   # active project summary
@@ -172,7 +172,7 @@ insyte analyze total_amount --by city
 | `INSYTE_HOME` | Override `~/.insyte` (tests set this to a tmp dir). |
 | `INSYTE_DATABASE_URL` | Default env var name a project reads the read-only URL from. |
 | `INSYTE_STUDIO_LLM` | `auto` \| `claude` \| `codex` \| `off` — which local AI CLI powers NL. `off` = deterministic parser only. Use `codex` if Claude is org-disabled. |
-| `INSYTE_STUDIO_LLM_TIMEOUT` / `INSYTE_STUDIO_REPORT_TIMEOUT` | Seconds for NL / detailed-report CLI calls. |
+| `INSYTE_STUDIO_LLM_TIMEOUT` / `INSYTE_STUDIO_REPORT_TIMEOUT` | Seconds for NL / detailed-report CLI calls. Detailed investigation reports use the same report timeout. |
 | `INSYTE_TEST_DATABASE_URL` | Enables the integration test suite against a real Postgres. |
 
 Example: `INSYTE_STUDIO_LLM=codex insyte studio`.
@@ -250,7 +250,8 @@ Work **domain-up**, one self-contained step at a time, keeping the gate green af
 4. **Expose on the interface(s):** a `cli/` command, a `studio/` route + `events.py` SSE, a
    `tui/controller.py` branch, and/or an `mcp/` tool. Keep interfaces thin.
 5. **Frontend** (Studio only): edit `studio_dist/assets/app.js` / `app.css`. It's a
-   dependency-free SPA (no build). Verify JS/CSS balance; the real visual check is in a browser.
+   dependency-free SPA (no build). Verify JS syntax with `node --check`, keep chart controls
+   keyboard-accessible, and do a real browser visual check.
 6. **Docs & safety:** update `README.md` / `SECURITY.md` if behaviour or the data-boundary
    changes.
 7. **Gate + packaging:** `ruff` + `mypy` + `pytest` clean; if you added a bundled asset, add a
@@ -288,7 +289,27 @@ A concrete trace of the process above (opt-in AI analyst report over a result):
 The invariant that keeps an ambitious feature honest: **data & charts are deterministic
 (Insyte), narrative is the AI's** — the model never authors SQL or invents a number.
 
-## 12. Conventions & gotchas
+## 12. Worked example: Context + Investigation Mode Lite
+
+Studio keeps conversations useful without widening the safety boundary:
+
+1. **Context snapshots** — `studio/context.py` records compact active metric, dimension,
+   period, report mode, recent turns, and analysis summaries. `conversation_service.py` persists
+   snapshots so follow-ups resolve after page reloads.
+2. **Deterministic planner** — `studio/investigation.py` detects why/how/change questions and
+   builds a fixed plan: monthly trend, current-vs-previous comparison, segment breakdown,
+   freshness/data-quality review, and final summary.
+3. **Safe execution** — every step calls `AnalysisService`; no investigation code writes SQL or
+   touches credentials directly. Missing time columns or dimensions become skipped timeline
+   steps with readable limitations.
+4. **Detailed investigation reports** — when the Studio toggle is on, the completed
+   investigation bundle is passed to the existing `nl.llm.resolve_report()` analyst skill. The
+   model receives only grounded aggregate outputs and returns the same `DetailedReport` schema.
+5. **Frontend timeline and charts** — `app.js` renders investigation timelines and interactive
+   charts with fullscreen expansion, hover tooltips, readable date labels, and smooth trend
+   lines.
+
+## 13. Conventions & gotchas
 
 - **Type hints** on all public functions; code must pass `mypy src`.
 - **Custom exceptions** from `insyte.exceptions` (`InsyteError` subclasses) — don't raise bare
@@ -302,11 +323,12 @@ The invariant that keeps an ambitious feature honest: **data & charts are determ
   will raise `JoinPathError`. Point dimensions at real, FK-connected tables.
 - **The SPA has no build step** — edit `studio_dist/assets/*` directly; it ships in the wheel
   (`[tool.hatch.build.targets.wheel]`). Static assets are served with ETag revalidation; a
-  browser may need a hard refresh after edits.
+  browser may need a hard refresh after edits. Run `node --check
+  src/insyte/studio_dist/assets/app.js` after non-trivial JS edits.
 - **macOS filesystem is case-insensitive** — project name/dir matching is case-insensitive on
   purpose; keep it that way.
 
-## 13. Publishing
+## 14. Publishing
 
 Full checklist in [PUBLISHING.md](PUBLISHING.md). Short version:
 

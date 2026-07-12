@@ -21,10 +21,18 @@ Two things are always true:
   (`insyte chat`), or directly from **Claude Code / Codex** over MCP.
 - **Trends, breakdowns, opportunity segments, comparisons, and forecasts** over metrics Insyte
   generates from your schema — with charts, tables, and the exact SQL on demand.
+- **Investigation Mode Lite** — ask broader questions like "why did total amount change?" and
+  Studio runs a safe, multi-step investigation: trend, current-vs-previous comparison, segment
+  breakdown, freshness checks, and next questions.
 - **Detailed reports (opt-in)** — flip on "Detailed report" in Studio for an in-depth analyst
   write-up: executive summary, key insights, data-quality flags, root-cause reasoning,
-  best/expected/worst forecast, and prioritized recommendations, in a visual dashboard. See the
-  privacy note below for what this shares.
+  evidence/counter-evidence, best/expected/worst forecast, and prioritized recommendations, in a
+  visual dashboard. Investigation questions can use the same analyst report skill over the
+  grounded investigation bundle. See the privacy note below for what this shares.
+- **Interactive charts** — charts include hover tooltips, readable date labels, expandable
+  fullscreen views, and smooth trend lines for faster inspection.
+- **Conversation context** — Studio remembers compact metric, dimension, period, and result
+  context so follow-up questions like "same metric last month" resolve more reliably.
 - **Read-only and private** — everything runs on your machine against your database; the raw
   connection URL never leaves your computer.
 
@@ -32,11 +40,11 @@ Two things are always true:
 
 Everything above keeps your data on your machine. The one **opt-in** exception is the
 **Detailed report**: to write analyst commentary, Insyte sends the *already-aggregated,
-PII-masked result* of your query (e.g. totals by city — never raw rows, never credentials) to
-your local `claude`/`codex` CLI, which forwards it to that provider. The AI only writes prose —
-it never sees credentials, never authors SQL, and every chart is built by Insyte from real
-numbers. It's off by default, shows a one-time notice the first time you enable it, and can be
-turned off entirely with `ai.detailed_reports: false` in `config.yaml`.
+PII-masked result* of your query, or a grounded investigation bundle built from those aggregate
+results, to your local `claude`/`codex` CLI, which forwards it to that provider. The AI only
+writes prose — it never sees credentials, never authors SQL, and every chart is built by Insyte
+from real numbers. It's off by default, shows a one-time notice the first time you enable it,
+and can be turned off entirely with `ai.detailed_reports: false` in `config.yaml`.
 
 ## Install & set up
 

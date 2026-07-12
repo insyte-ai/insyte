@@ -25,10 +25,10 @@ A brand-new user should need exactly this — no shell scripts, no venv juggling
 
 ```bash
 pip install insyte
-insyte setup
+insyte init
 ```
 
-`insyte setup` is a single guided flow that:
+`insyte init` is a single guided flow that:
 
 1. **Checks the environment** (Python version, that install succeeded).
 2. **Asks for the database URL** → validates it's read-only-friendly, stores it once in a
@@ -75,9 +75,9 @@ Acceptance (met): on a clean machine, `pip install insyte && insyte init` (paste
 
 ## 3. Remove the shell scripts and demo/seed files
 
-These exist only because we were pre-PyPI. Once `insyte setup` lands, delete them:
+These exist only because we were pre-PyPI. Once this release is cut, delete them:
 
-- `scripts/setup.sh`  → replaced by `insyte setup`
+- `scripts/setup.sh`  → replaced by `insyte init`
 - `scripts/dev-setup.sh` → replace with a short "Contributing" section in the README
   (`uv venv && uv pip install -e '.[dev]'`)
 - `scripts/setup_flipkart.sh`, `scripts/seed_flipkart.sql`, `scripts/seed_test_ecommerce.sql`
@@ -117,7 +117,7 @@ Rewrite `README.md` around the new one-line install. Sections:
 3. **Install & set up**:
    ```bash
    pip install insyte
-   insyte setup          # asks for DB URL + AI tool, does connect/scan/metrics/MCP
+   insyte init           # asks for DB URL + AI tool, does connect/scan/metrics/MCP
    insyte studio         # or: insyte chat
    ```
 4. **Requirements** — Python 3.11+, a PostgreSQL database, optionally the `claude` or `codex`
@@ -138,9 +138,9 @@ Remove all references to `scripts/setup.sh`, `setup_flipkart.sh`, and manual ven
 
 ## 6. Update the other docs
 
-- `docs/QUICKSTART.md` — collapse to the `pip install insyte` + `insyte setup` flow; delete the
+- `docs/QUICKSTART.md` — collapse to the `pip install insyte` + `insyte init` flow; delete the
   from-checkout / venv-rebuild / `./scripts/setup.sh` instructions.
-- `docs/mcp.md` — keep, but note that `insyte setup` already installs MCP, and that no
+- `docs/mcp.md` — keep, but note that `insyte init` already installs MCP, and that no
   `--embed-secret` is needed because the URL is stored during setup.
 - Delete/relocate anything referencing the seed scripts.
 
@@ -151,7 +151,7 @@ Remove all references to `scripts/setup.sh`, `setup_flipkart.sh`, and manual ven
 Make it easy for users to report issues and ideas:
 
 - Add **GitHub Issues** link + a short issue template (bug / feature / question).
-- In the README "Feedback" section and in `insyte setup`'s final message, print:
+- In the README "Feedback" section and in `insyte init`'s final message, print:
   *"Found a bug or have an idea? Open an issue: <repo-url>/issues"*.
 - Optional: `insyte feedback` command that opens the issues page (or prints the link).
 
@@ -173,7 +173,7 @@ python -m zipfile -l dist/insyte-*.whl | grep studio_dist   # index.html, app.js
 # 3. Smoke-test in a CLEAN environment
 python -m venv /tmp/insyte-test && /tmp/insyte-test/bin/pip install dist/insyte-*.whl
 /tmp/insyte-test/bin/insyte --version
-/tmp/insyte-test/bin/insyte setup           # against a throwaway DB
+/tmp/insyte-test/bin/insyte init            # against a throwaway DB
 
 # 4. Upload to TestPyPI, install from there, re-smoke-test
 uv publish --publish-url https://test.pypi.org/legacy/ dist/*
@@ -194,13 +194,13 @@ onboarding once more.
 ## 9. Acceptance criteria (definition of done)
 
 - [ ] `pip install insyte` in a clean venv pulls all runtime deps; `insyte --version` works.
-- [ ] `insyte setup` runs the full guided flow (URL → connect → scan → metrics → MCP) with
+- [ ] `insyte init` runs the full guided flow (URL → connect → scan → metrics → MCP) with
       **no shell scripts and no environment variables**.
 - [ ] `insyte studio` serves the SPA (with the logo) and answers free-form questions via the
       user's Claude/Codex; `insyte chat` works too.
 - [ ] `scripts/` is gone; README + QUICKSTART reflect the `pip install` flow.
 - [ ] Wheel bundles `studio_dist/assets/**` (SPA + logo).
-- [ ] Feedback/issues link is present in the README and in `insyte setup` output.
+- [ ] Feedback/issues link is present in the README and in `insyte init` output.
 - [ ] Safety guarantees intact: credentials never reach the model or logs; Studio is
       localhost-only; all queries pass SQL validation.
 
@@ -211,7 +211,7 @@ onboarding once more.
 Parked capability work, to schedule after launch:
 
 - Ad-hoc filters ("revenue for delivered orders in Mumbai") + AVG/ratio/distinct metrics.
-- Diagnostic "why did X change" and auto-insights / "summarize my business".
+- Saved investigations and richer workspace navigation for investigation results.
 - Month-level & seasonal forecasting.
 - Response-speed work (expand deterministic parser, fast model for translation, cache).
 - Minor polish: "Total MRP" acronym casing, favicon from the icon.
