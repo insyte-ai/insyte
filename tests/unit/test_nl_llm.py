@@ -43,8 +43,28 @@ def _layer() -> SemanticLayer:
                 source_table="public.orders",
                 time_column="orders.created_at",
             ),
+            "product_margin_rate": Metric(
+                label="Margin rate",
+                expression="AVG(products.margin_rate)",
+                source_table="public.products",
+                format=MetricFormat.percent,
+            ),
+            "view_margin_rate": Metric(
+                label="Margin rate",
+                expression="AVG(product_analysis.margin_rate)",
+                source_table="public.product_analysis",
+                format=MetricFormat.percent,
+            ),
+            "view_units_sold": Metric(
+                label="Units sold",
+                expression="SUM(product_analysis.units_sold)",
+                source_table="public.product_analysis",
+            ),
         },
-        dimensions={"city": Dimension(source="cities.name", label="City")},
+        dimensions={
+            "city": Dimension(source="cities.name", label="City"),
+            "product_name": Dimension(source="product_analysis.product_name", label="Product"),
+        },
     )
 
 
@@ -144,6 +164,24 @@ def test_validate_opportunity_mode() -> None:
         secondary_metric="units_sold",
         mode=AnalysisMode.opportunity,
         dimension="city",
+    )
+
+
+def test_validate_opportunity_reconciles_metrics_to_shared_source() -> None:
+    data = {
+        "kind": "analysis",
+        "metric": "product_margin_rate",
+        "secondary_metric": "units_sold",
+        "mode": "opportunity",
+        "dimension": "product_name",
+    }
+    res = _validate(data, _layer())
+    assert res == NLResolution(
+        "analysis",
+        metric="view_margin_rate",
+        secondary_metric="view_units_sold",
+        mode=AnalysisMode.opportunity,
+        dimension="product_name",
     )
 
 

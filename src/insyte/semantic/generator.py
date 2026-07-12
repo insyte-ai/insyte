@@ -20,6 +20,32 @@ from insyte.semantic.models import (
 )
 
 _CURRENCY_HINTS = ("amount", "revenue", "price", "total", "cost", "value", "balance")
+_AVERAGE_HINTS = (
+    "avg",
+    "average",
+    "percent",
+    "percentage",
+    "rate",
+    "ratio",
+    "margin",
+    "score",
+)
+_ADDITIVE_HINTS = (
+    "amount",
+    "revenue",
+    "sales",
+    "count",
+    "orders",
+    "trips",
+    "rides",
+    "bookings",
+    "borrows",
+    "loans",
+    "units",
+    "quantity",
+    "qty",
+    "total",
+)
 _TIMESTAMP_PREFIXES = ("timestamp", "date", "datetime")
 _NUMERIC_PREFIXES = (
     "numeric",
@@ -87,7 +113,11 @@ def _add_metrics(
     result: GenerationResult,
 ) -> None:
     summary = detail.summary
-    if summary.category not in {TableCategory.fact.value, TableCategory.event.value}:
+    analytical_source = _is_analysis_ready_source(detail)
+    if not analytical_source and summary.category not in {
+        TableCategory.fact.value,
+        TableCategory.event.value,
+    }:
         return
     time_column = _first_timestamp(detail)
     qualified_time = f"{summary.name}.{time_column}" if time_column else None
@@ -111,22 +141,25 @@ def _add_metrics(
     for column in detail.columns:
         if column.name in key_columns or not _is_numeric(column.data_type):
             continue
+        if analytical_source and _looks_like_identifier(column.name):
+            continue
         profile = profiles.get(f"{summary.schema}.{summary.name}.{column.name}")
         if profile is not None and profile.is_pii:
             continue
         # Avoid "total_total_amount" / "Total total amount": don't double the "total".
         base = column.name
-        metric_name = base if base.startswith(("total_", "sum_")) else f"total_{base}"
+        aggregate = _aggregate_for_column(base, analytical_source=analytical_source)
+        metric_name = _metric_name(base, aggregate)
         if metric_name in layer.metrics:
             continue
-        label = _humanize(base) if "total" in base else f"Total {base.replace('_', ' ')}"
+        label = _metric_label(base, aggregate)
         layer.metrics[metric_name] = Metric(
             label=label,
-            expression=f"SUM({summary.name}.{column.name})",
+            expression=f"{aggregate}({summary.name}.{column.name})",
             source_table=summary.qualified_name,
             time_column=qualified_time,
             status=MetricStatus.suggested,
-            confidence=0.7,
+            confidence=0.75 if analytical_source else 0.7,
             format=_metric_format(column.name),
         )
         result.added_metrics.append(metric_name)
@@ -172,8 +205,73 @@ def _is_text(data_type: str) -> bool:
     return data_type.lower().startswith(_TEXT_PREFIXES)
 
 
+def _is_analysis_ready_source(detail: TableDetail) -> bool:
+    """Return true for tables/views that already look like an analytical model.
+
+    This is intentionally shape-based, not name-based. Many teams create reporting views for
+    their own domain: library circulation by branch/genre, rides by city/driver tier, inventory
+    by supplier/category, and so on. If a relation has categorical columns plus numeric measures,
+    it can produce useful semantic metrics even when the table classifier calls it ``unknown``.
+    """
+
+    if detail.summary.category in {TableCategory.fact.value, TableCategory.event.value}:
+        return True
+    if detail.summary.category not in {TableCategory.unknown.value, TableCategory.snapshot.value}:
+        return False
+    numeric = [
+        c for c in detail.columns if _is_numeric(c.data_type) and not _looks_like_identifier(c.name)
+    ]
+    text = [c for c in detail.columns if _is_text(c.data_type)]
+    measure_like = [c for c in numeric if _measure_score(c.name) > 0]
+    return len(text) >= 1 and len(measure_like) >= 2
+
+
+def _looks_like_identifier(column_name: str) -> bool:
+    lowered = column_name.lower()
+    return lowered == "id" or lowered.endswith("_id")
+
+
+def _measure_score(column_name: str) -> int:
+    lowered = column_name.lower()
+    return sum(
+        1 for hint in (*_AVERAGE_HINTS, *_ADDITIVE_HINTS, *_CURRENCY_HINTS) if hint in lowered
+    )
+
+
+def _aggregate_for_column(column_name: str, *, analytical_source: bool) -> str:
+    lowered = column_name.lower()
+    if any(hint in lowered for hint in _AVERAGE_HINTS):
+        return "AVG"
+    if (
+        analytical_source
+        and "price" in lowered
+        and not any(hint in lowered for hint in ("revenue", "sales", "amount", "total"))
+    ):
+        return "AVG"
+    return "SUM"
+
+
+def _metric_name(column_name: str, aggregate: str) -> str:
+    lowered = column_name.lower()
+    if lowered.startswith(("total_", "sum_", "avg_", "average_")):
+        return lowered
+    prefix = "avg" if aggregate == "AVG" else "total"
+    return f"{prefix}_{lowered}"
+
+
+def _metric_label(column_name: str, aggregate: str) -> str:
+    lowered = column_name.lower()
+    if lowered.startswith(("total_", "sum_", "avg_", "average_")):
+        return _humanize(column_name)
+    prefix = "Average" if aggregate == "AVG" else "Total"
+    return f"{prefix} {column_name.replace('_', ' ')}"
+
+
 def _metric_format(column_name: str) -> MetricFormat:
-    if any(hint in column_name.lower() for hint in _CURRENCY_HINTS):
+    lowered = column_name.lower()
+    if any(hint in lowered for hint in ("percent", "percentage", "rate", "ratio")):
+        return MetricFormat.percent
+    if any(hint in lowered for hint in _CURRENCY_HINTS):
         return MetricFormat.currency
     return MetricFormat.number
 

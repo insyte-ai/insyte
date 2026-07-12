@@ -26,12 +26,14 @@ def _col(name: str, dtype: str, *, pk: bool = False) -> ColumnInfo:
     )
 
 
-def _detail(name: str, category: str, columns: list[ColumnInfo]) -> TableDetail:
+def _detail(
+    name: str, category: str, columns: list[ColumnInfo], *, kind: str = "table"
+) -> TableDetail:
     return TableDetail(
         summary=TableSummary(
             schema="public",
             name=name,
-            kind="table",
+            kind=kind,
             row_estimate=100,
             size_bytes=None,
             column_count=len(columns),
@@ -66,6 +68,36 @@ def test_generate_metrics_and_dimensions() -> None:
     assert result.layer.metrics["total_amount"].format.value == "currency"
     assert "status" in result.layer.dimensions
     assert all(m.status is MetricStatus.suggested for m in result.layer.metrics.values())
+
+
+def test_generate_metrics_from_analysis_ready_view() -> None:
+    circulation = _detail(
+        "branch_circulation_analysis",
+        "unknown",
+        [
+            _col("branch_id", "integer"),
+            _col("branch_name", "text"),
+            _col("genre", "text"),
+            _col("borrow_count", "integer"),
+            _col("late_return_rate", "numeric"),
+            _col("avg_days_on_loan", "numeric"),
+        ],
+        kind="view",
+    )
+
+    result = generate_semantic([circulation], profiles={}, existing=SemanticLayer())
+
+    assert "total_borrow_count" in result.layer.metrics
+    assert result.layer.metrics["total_borrow_count"].expression == (
+        "SUM(branch_circulation_analysis.borrow_count)"
+    )
+    assert "avg_late_return_rate" in result.layer.metrics
+    assert result.layer.metrics["avg_late_return_rate"].expression == (
+        "AVG(branch_circulation_analysis.late_return_rate)"
+    )
+    assert result.layer.metrics["avg_late_return_rate"].format.value == "percent"
+    assert "branch_id" not in result.layer.metrics
+    assert "branch_name" in result.layer.dimensions
 
 
 def test_pii_column_excluded_from_metrics_and_dimensions() -> None:

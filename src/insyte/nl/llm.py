@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -246,6 +247,10 @@ def _validate(data: dict, layer: SemanticLayer) -> NLResolution | None:
         period = None
 
     # Reconcile mode with the fields actually present.
+    if mode is AnalysisMode.opportunity and secondary_metric and dimension:
+        metric, secondary_metric = _reconcile_opportunity_metrics(
+            metric, secondary_metric, dimension, layer
+        )
     if mode is AnalysisMode.segment and dimension is None:
         mode = AnalysisMode.aggregate
     if mode is AnalysisMode.opportunity and (secondary_metric is None or dimension is None):
@@ -277,6 +282,83 @@ def _match_key(value: str, mapping: dict) -> str | None:
         if key.lower() == lowered:
             return key
     return None
+
+
+def _reconcile_opportunity_metrics(
+    primary_name: str,
+    secondary_name: str,
+    dimension_name: str,
+    layer: SemanticLayer,
+) -> tuple[str, str]:
+    """Prefer opportunity metrics that share one source/grain.
+
+    The model sees metric names and labels, but it does not understand grain as strongly as the
+    SQL generator does. If it picks a high metric from one table and a low metric from another,
+    look for semantically similar alternatives on a single source table. This is generic: it
+    works for grocery products, library circulation, rideshare trips, or any reporting view the
+    scanner turned into metrics.
+    """
+
+    primary = layer.metrics[primary_name]
+    secondary = layer.metrics[secondary_name]
+    if primary.source_table == secondary.source_table:
+        return primary_name, secondary_name
+
+    dimension = layer.dimensions[dimension_name]
+    preferred_source = _qualify_table(dimension.table)
+    source_tables = {m.source_table for m in layer.metrics.values()}
+    best: tuple[int, str, str] | None = None
+    for source_table in sorted(source_tables):
+        primary_candidate = _best_metric_on_source(primary_name, source_table, layer)
+        secondary_candidate = _best_metric_on_source(secondary_name, source_table, layer)
+        if primary_candidate is None or secondary_candidate is None:
+            continue
+        primary_score, resolved_primary = primary_candidate
+        secondary_score, resolved_secondary = secondary_candidate
+        if resolved_primary == resolved_secondary:
+            continue
+        score = primary_score + secondary_score
+        if _qualify_table(source_table) == preferred_source:
+            score += 4
+        if best is None or score > best[0]:
+            best = (score, resolved_primary, resolved_secondary)
+
+    if best is None or best[0] < 4:
+        return primary_name, secondary_name
+    return best[1], best[2]
+
+
+def _best_metric_on_source(
+    target_name: str, source_table: str, layer: SemanticLayer
+) -> tuple[int, str] | None:
+    target = layer.metrics[target_name]
+    target_words = _metric_words(target_name, target.label)
+    best: tuple[int, str] | None = None
+    for name, metric in layer.metrics.items():
+        if metric.source_table != source_table:
+            continue
+        score = len(target_words & _metric_words(name, metric.label))
+        if score == 0:
+            continue
+        if metric.format == target.format:
+            score += 1
+        if best is None or score > best[0]:
+            best = (score, name)
+    return best
+
+
+def _metric_words(name: str, label: str) -> set[str]:
+    words = {
+        word
+        for word in re.split(r"[^a-z0-9]+", f"{name} {label}".lower())
+        if len(word) > 2 and word not in {"sum", "avg", "total", "average", "count"}
+    }
+    singulars = {word[:-1] for word in words if word.endswith("s") and len(word) > 3}
+    return words | singulars
+
+
+def _qualify_table(table: str) -> str:
+    return table if "." in table else f"public.{table}"
 
 
 def _as_enum(value: str, enum: type[_E]) -> _E | None:
