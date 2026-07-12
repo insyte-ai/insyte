@@ -3,6 +3,11 @@
 Thanks for your interest in improving Insyte! This project is built milestone by milestone
 (see the roadmap in the [README](README.md)).
 
+> **For the full architecture, how to add a feature, and how to write/run tests, read
+> [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).** It's written to be usable by humans and AI
+> coding agents alike (you can copy it to `CLAUDE.md` / `AGENTS.md` for auto-loading).
+
+
 ## Development setup
 
 ```bash
