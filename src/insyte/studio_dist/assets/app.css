@@ -15,6 +15,13 @@
   --yellow: #d97706;
   --shadow: 0 1px 2px rgba(16, 20, 30, 0.06), 0 8px 24px rgba(16, 20, 30, 0.06);
   --radius: 12px;
+  --scene-base: #f1f4fa;
+  --scene-grid: rgba(73, 88, 121, 0.05);
+  --scene-grid-strong: rgba(73, 88, 121, 0.085);
+  --scene-glow-a: rgba(124, 58, 237, 0.09);
+  --scene-glow-b: rgba(14, 165, 233, 0.055);
+  --scene-grid-opacity: 0.72;
+  --scene-glow-opacity: 0.48;
 }
 
 :root[data-theme="dark"] {
@@ -31,24 +38,79 @@
   --red: #f87171;
   --yellow: #fbbf24;
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.35);
+  --scene-base: #05070d;
+  --scene-grid: rgba(255, 255, 255, 0.022);
+  --scene-grid-strong: rgba(255, 255, 255, 0.034);
+  --scene-glow-a: rgba(124, 58, 237, 0.16);
+  --scene-glow-b: rgba(14, 165, 233, 0.1);
+  --scene-grid-opacity: 0.8;
+  --scene-glow-opacity: 0.36;
 }
 
 * { box-sizing: border-box; }
 
-/* Animated dotted background — sits behind everything, dim, non-interactive. */
-#bg-dots { position: fixed; inset: 0; width: 100vw; height: 100vh; z-index: -1; pointer-events: none; }
+/* Studio backdrop: dark field + faint grid + soft glows. */
+#bg-scene {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 16% 16%, color-mix(in srgb, var(--scene-glow-a) 72%, transparent) 0%, transparent 30%),
+    radial-gradient(circle at 86% 88%, color-mix(in srgb, var(--scene-glow-b) 68%, transparent) 0%, transparent 32%),
+    linear-gradient(135deg, color-mix(in srgb, var(--scene-glow-a) 16%, transparent) 0%, transparent 28%, transparent 72%, color-mix(in srgb, var(--scene-glow-b) 12%, transparent) 100%),
+    linear-gradient(180deg, color-mix(in srgb, var(--scene-base) 98%, #fff) 0%, var(--scene-base) 48%, color-mix(in srgb, var(--scene-base) 92%, #000) 100%);
+}
+.bg-grid {
+  position: absolute;
+  inset: 0;
+  opacity: var(--scene-grid-opacity);
+  background-image:
+    linear-gradient(to right, var(--scene-grid) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--scene-grid) 1px, transparent 1px),
+    linear-gradient(to right, var(--scene-grid-strong) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--scene-grid-strong) 1px, transparent 1px);
+  background-size: 56px 56px, 56px 56px, 224px 224px, 224px 224px;
+  mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.86), rgba(0, 0, 0, 0.38) 76%, transparent);
+}
+.bg-glow {
+  position: absolute;
+  width: 52vw;
+  height: 52vw;
+  border-radius: 50%;
+  filter: blur(24px);
+  opacity: var(--scene-glow-opacity);
+}
+.bg-glow-a {
+  top: -18vw;
+  left: -14vw;
+  background: radial-gradient(circle, var(--scene-glow-a), rgba(124, 58, 237, 0.04) 36%, transparent 72%);
+}
+.bg-glow-b {
+  right: -14vw;
+  bottom: -18vw;
+  background: radial-gradient(circle, var(--scene-glow-b), rgba(59, 130, 246, 0.03) 40%, transparent 72%);
+}
 
 html, body {
   margin: 0;
   height: 100%;
-  background: var(--bg);
+  position: relative;
+  background: var(--scene-base);
   color: var(--text);
   font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, sans-serif;
   font-size: 14.5px;
   line-height: 1.55;
 }
 
-#app { display: grid; grid-template-rows: auto 1fr auto; height: 100vh; }
+#app {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  height: 100vh;
+}
 
 /* Header */
 .header {

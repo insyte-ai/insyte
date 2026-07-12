@@ -1163,45 +1163,15 @@
     if (view) view.append(el("div", { class: "warn-box" }, "Something went wrong: " + err.message));
   }
 
-  // ---- animated dotted background --------------------------------------------------------
+  // ---- backdrop -------------------------------------------------------------------------
   function initBackground() {
-    if (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-    const canvas = el("canvas", { id: "bg-dots" });
-    document.body.appendChild(canvas);
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-    let w = 0, h = 0;
-    const GAP = 32;
-    function resize() {
-      const dpr = Math.min(window.devicePixelRatio || 1, 2);
-      w = window.innerWidth; h = window.innerHeight;
-      canvas.width = w * dpr; canvas.height = h * dpr;
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    }
-    resize();
-    window.addEventListener("resize", resize);
-    let t = 0;
-    function frame() {
-      ctx.clearRect(0, 0, w, h);
-      const light = document.documentElement.getAttribute("data-theme") === "light";
-      const base = light ? "60, 80, 140" : "150, 165, 220";
-      for (let x = 0; x <= w + GAP; x += GAP) {
-        for (let y = 0; y <= h + GAP; y += GAP) {
-          // A slow sine/cosine wave gives the dots a gentle rolling, pseudo-3D motion.
-          const wave = Math.sin(x * 0.012 + t) * Math.cos(y * 0.012 + t * 0.7);
-          const depth = (wave + 1) * 0.5;            // 0..1
-          const r = 0.8 + depth * 1.6;
-          const alpha = 0.12 + depth * 0.24;         // visible but still subtle behind the chat
-          ctx.beginPath();
-          ctx.fillStyle = "rgba(" + base + "," + alpha.toFixed(3) + ")";
-          ctx.arc(x, y + wave * 5, r, 0, Math.PI * 2);
-          ctx.fill();
-        }
-      }
-      t += 0.006;
-      requestAnimationFrame(frame);
-    }
-    frame();
+    if ($("#bg-scene")) return;
+    const backdrop = el("div", { id: "bg-scene", "aria-hidden": "true" },
+      el("div", { class: "bg-glow bg-glow-a" }),
+      el("div", { class: "bg-glow bg-glow-b" }),
+      el("div", { class: "bg-grid" })
+    );
+    document.body.appendChild(backdrop);
   }
 
   // ---- boot ------------------------------------------------------------------------------

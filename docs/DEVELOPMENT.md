@@ -155,7 +155,7 @@ Everything below can be run either as `uv run <cmd>` or, with the venv activated
 ## 7. Running Insyte locally
 
 ```bash
-insyte --version                # 0.2.3
+insyte --version                # 0.2.4
 insyte --help                   # every command
 insyte init                     # guided: read-only DB URL + AI tool → connect, scan, metrics, MCP
 insyte status                   # active project summary
