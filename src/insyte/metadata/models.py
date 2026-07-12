@@ -218,6 +218,22 @@ class ConversationContextSnapshot:
     created_at: datetime
 
 
+@dataclass
+class SavedInvestigation:
+    """A completed Studio investigation saved for later reading."""
+
+    id: str
+    project: str
+    analysis_id: str
+    conversation_id: str | None
+    title: str
+    summary: str
+    question: str
+    result_json: dict
+    created_at: datetime
+    updated_at: datetime
+
+
 # --------------------------------------------------------------------------------------------
 # ORM records (persistence model)
 # --------------------------------------------------------------------------------------------
@@ -458,6 +474,22 @@ class AnalysisResultRecord(Base):
     structured_result_json: Mapped[str | None] = mapped_column(default=None)
     status: Mapped[str] = mapped_column(default="completed")
     created_at: Mapped[datetime | None] = mapped_column(default=None)
+
+
+class SavedInvestigationRecord(Base):
+    __tablename__ = "saved_investigations"
+    __table_args__ = (UniqueConstraint("analysis_id"),)
+
+    id: Mapped[str] = mapped_column(primary_key=True)
+    project: Mapped[str]
+    analysis_id: Mapped[str]
+    conversation_id: Mapped[str | None] = mapped_column(default=None)
+    title: Mapped[str]
+    summary: Mapped[str] = mapped_column(default="")
+    question: Mapped[str] = mapped_column(default="")
+    result_json: Mapped[dict] = mapped_column(JSON)
+    created_at: Mapped[datetime]
+    updated_at: Mapped[datetime]
 
 
 # --------------------------------------------------------------------------------------------

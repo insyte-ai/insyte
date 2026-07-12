@@ -76,6 +76,9 @@ _SLASH = {
     "history": IntentKind.history,
 }
 
+_AUTO_ALIAS_CONFIDENCE = 0.8
+_AMBIGUITY_MARGIN = 0.05
+
 
 def _normalize(text: str) -> str:
     return re.sub(r"[^a-z0-9 ]+", " ", text.lower()).strip()
@@ -162,7 +165,31 @@ def find_metric(text: str, layer: SemanticLayer) -> str | None:
             phrase = _normalize(candidate)
             if phrase and f" {phrase} " in haystack and len(phrase) > best_len:
                 best, best_len = name, len(phrase)
-    return best
+    if best is not None:
+        return best
+    return _find_metric_alias(haystack, layer)
+
+
+def _find_metric_alias(haystack: str, layer: SemanticLayer) -> str | None:
+    matches: list[tuple[float, int, str]] = []
+    for phrase, alias in layer.aliases.items():
+        if alias.target_type != "metric" or alias.target not in layer.metrics:
+            continue
+        normalized = _normalize(phrase)
+        if not normalized or f" {normalized} " not in haystack:
+            continue
+        if alias.confidence < _AUTO_ALIAS_CONFIDENCE:
+            continue
+        matches.append((alias.confidence, len(normalized), alias.target))
+    if not matches:
+        return None
+    matches.sort(reverse=True)
+    if len(matches) > 1:
+        top_confidence, _, top_target = matches[0]
+        second_confidence, _, second_target = matches[1]
+        if top_target != second_target and top_confidence - second_confidence < _AMBIGUITY_MARGIN:
+            return None
+    return matches[0][2]
 
 
 def find_dimension(tokens: list[str], layer: SemanticLayer) -> str | None:
@@ -175,4 +202,20 @@ def find_dimension(tokens: list[str], layer: SemanticLayer) -> str | None:
             candidates = {name, name.replace("_", " "), (dimension.label or "").lower()}
             if phrase == name or label in {_normalize(c) for c in candidates if c}:
                 return name
-    return None
+    label = " ".join(tokens)
+    haystack = f" {_normalize(label)} "
+    matches: list[tuple[float, int, str]] = []
+    for phrase, alias in layer.aliases.items():
+        if alias.target_type != "dimension" or alias.target not in layer.dimensions:
+            continue
+        normalized = _normalize(phrase)
+        if (
+            normalized
+            and f" {normalized} " in haystack
+            and alias.confidence >= _AUTO_ALIAS_CONFIDENCE
+        ):
+            matches.append((alias.confidence, len(normalized), alias.target))
+    if not matches:
+        return None
+    matches.sort(reverse=True)
+    return matches[0][2]

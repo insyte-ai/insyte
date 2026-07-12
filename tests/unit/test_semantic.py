@@ -4,7 +4,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from insyte.semantic.models import Dimension, Metric, MetricFormat, MetricStatus, SemanticLayer
+from insyte.semantic.models import (
+    Dimension,
+    Metric,
+    MetricFormat,
+    MetricStatus,
+    SemanticAlias,
+    SemanticLayer,
+)
 from insyte.semantic.repository import SemanticRepository
 
 _YAML = """
@@ -23,6 +30,13 @@ dimensions:
   city:
     source: cities.name
     type: categorical
+aliases:
+  order count:
+    target: completed_revenue
+    target_type: metric
+    confidence: 0.81
+    evidence:
+      - metric:completed_revenue
 """
 
 
@@ -36,6 +50,8 @@ def test_load_semantic(tmp_path: Path) -> None:
     assert metric.format is MetricFormat.currency
     assert metric.status is MetricStatus.confirmed
     assert layer.dimensions["city"].source == "cities.name"
+    assert layer.aliases["order count"].target == "completed_revenue"
+    assert layer.aliases["order count"].confidence == 0.81
 
 
 def test_missing_file_returns_empty(tmp_path: Path) -> None:
@@ -50,12 +66,18 @@ def test_round_trip(tmp_path: Path) -> None:
             "m": Metric(label="M", expression="COUNT(*)", source_table="public.t"),
         },
         dimensions={"d": Dimension(source="t.col")},
+        aliases={
+            "business volume": SemanticAlias(
+                target="m", confidence=0.83, evidence=["metric:m"]
+            )
+        },
     )
     repo = SemanticRepository(path)
     repo.save(layer)
     reloaded = repo.load()
     assert reloaded.metrics["m"].expression == "COUNT(*)"
     assert reloaded.dimensions["d"].source == "t.col"
+    assert reloaded.aliases["business volume"].evidence == ["metric:m"]
 
 
 def test_dimension_table_property() -> None:

@@ -23,8 +23,10 @@ Codex, etc.) can pick it up cold and be productive.
 9. [Writing tests (patterns)](#9-writing-tests-patterns)
 10. [How to add a new feature](#10-how-to-add-a-new-feature)
 11. [Worked example: the Detailed Report feature](#11-worked-example-the-detailed-report-feature)
-12. [Conventions & gotchas](#12-conventions--gotchas)
-13. [Publishing](#13-publishing)
+12. [Worked example: Semantic aliases without hallucination](#12-worked-example-semantic-aliases-without-hallucination)
+13. [Worked example: Context, investigations, and saved workspace](#13-worked-example-context-investigations-and-saved-workspace)
+14. [Conventions & gotchas](#14-conventions--gotchas)
+15. [Publishing](#15-publishing)
 
 ---
 
@@ -86,7 +88,7 @@ Key domain packages:
 | `config/` | Pydantic config models, YAML load/save, `~/.insyte` paths, secret (DB URL) resolution — never stores the URL. |
 | `connectors/` | Read-only DB connections (`postgres.py`, `duckdb.py`); `read_only_transaction()` with timeouts; `factory.py`. |
 | `metadata/` | `scanner` (schema), `profiler` (sample column stats), `pii_detector`, `classifier` (fact/dim), `relationship_detector` (FKs), `repository` (SQLite metadata store). |
-| `semantic/` | Semantic-layer models (metrics / dimensions / entities), `generator` (auto-generate from schema), `validator`, `repository` (`semantic.yaml`). |
+| `semantic/` | Semantic-layer models (metrics / dimensions / entities / aliases), `generator` (auto-generate from schema), `validator`, `repository` (`semantic.yaml`). |
 | `query/` | `generator` (SQL + join BFS), `validator` (SQLGlot), `cost_guard` (limits), `executor` (read-only run). |
 | `analytics/` | `engine` (aggregate/timeseries/segment/opportunity/compare), `charts` (Indian ₹/Cr/L formatting), `forecast`, `segmentation`, `comparison`, `report` (detailed-report grounding). |
 | `nl/` | `llm` (shell out to `claude`/`codex`; NL→intent and detailed-report prose), `periods`. The deterministic parser is `tui/intent.py`. |
@@ -289,7 +291,108 @@ A concrete trace of the process above (opt-in AI analyst report over a result):
 The invariant that keeps an ambitious feature honest: **data & charts are deterministic
 (Insyte), narrative is the AI's** — the model never authors SQL or invents a number.
 
-## 12. Worked example: Context + Investigation Mode Lite
+## 12. Worked example: Semantic aliases without hallucination
+
+The semantic alias layer makes Studio smarter about obvious business wording while preserving
+the same no-hallucination boundary as the rest of the system.
+
+### Data model
+
+`semantic/models.py` defines `SemanticAlias`:
+
+```python
+class SemanticAlias(BaseModel):
+    target: str
+    target_type: str = "metric"  # metric | dimension
+    confidence: float = 0.5
+    evidence: list[str] = Field(default_factory=list)
+    status: MetricStatus = MetricStatus.suggested
+```
+
+`SemanticLayer.aliases` is a dictionary keyed by normalized human phrase:
+
+```yaml
+aliases:
+  order count:
+    target: sales_order_count
+    target_type: metric
+    confidence: 0.93
+    evidence:
+      - metric:sales_order_count
+      - expression:COUNT(*)
+    status: suggested
+```
+
+Aliases are routing hints only. They never define a new table, column, value, metric
+expression, or SQL query.
+
+### Generation
+
+`semantic/generator.py` creates aliases after it has generated or merged entities, metrics, and
+dimensions:
+
+1. It adds aliases for metric names and labels (`sales_order_count`, `Sales order count`).
+2. It strips aggregate prefixes for natural phrasing (`total_completed_orders` →
+   `completed orders`).
+3. It adds obvious count aliases from countable entity tables (`sales_orders` →
+   `sales_order_count`, `order count`).
+4. It adds dimension aliases from dimension names, labels, and source columns.
+
+Count metrics are generated not only for fact/event tables, but also for timestamped business
+entity tables with a primary key. This is why a `sales_orders` table with `order_ts` can produce
+a time-aware `sales_order_count` metric, which is better for investigations than an aggregate
+field with no time column.
+
+### Validation
+
+`semantic/validator.py` validates aliases against the current semantic layer:
+
+- `target_type: metric` must point at an existing metric.
+- `target_type: dimension` must point at an existing dimension.
+- unknown target types are errors.
+
+This is the main anti-hallucination guard: an alias cannot point at something that does not
+already exist in `semantic.yaml`.
+
+### Parsing
+
+`tui/intent.py` uses aliases only after exact metric matching fails:
+
+1. Exact metric name/label wins.
+2. High-confidence alias matches are considered next.
+3. Aliases below `_AUTO_ALIAS_CONFIDENCE` are ignored.
+4. Multiple close-confidence aliases with different targets are treated as ambiguous and return
+   unknown instead of silently choosing.
+
+The same alias-aware parser is used by Studio, TUI, and MCP-facing analysis paths.
+
+### Safety rules for future AI enrichment
+
+If a future `semantic enrich --backend codex|claude` command is added, it must obey these
+rules:
+
+- send metadata only: table names, column names/types, relationships, safe profiles, existing
+  metrics/dimensions/aliases;
+- never send credentials or raw rows;
+- require structured JSON/YAML output;
+- validate every suggested target against scanned metadata and `semantic.yaml`;
+- reject filters unless the value came from safe low-cardinality profiles;
+- keep suggestions as `suggested`, not `confirmed`;
+- preserve evidence for every accepted alias.
+
+AI may label and connect existing facts. Deterministic code must verify every reference before
+the alias is usable.
+
+### Tests
+
+Relevant tests:
+
+- `tests/unit/test_semantic.py` — YAML load/save round-trip for aliases.
+- `tests/unit/test_semantic_generator.py` — alias generation, `order count` mapping, validation
+  errors for bad targets.
+- `tests/unit/test_intent.py` — alias resolution, low-confidence rejection, ambiguity guard.
+
+## 13. Worked example: Context, investigations, and saved workspace
 
 Studio keeps conversations useful without widening the safety boundary:
 
@@ -298,7 +401,9 @@ Studio keeps conversations useful without widening the safety boundary:
    snapshots so follow-ups resolve after page reloads.
 2. **Deterministic planner** — `studio/investigation.py` detects why/how/change questions and
    builds a fixed plan: monthly trend, current-vs-previous comparison, segment breakdown,
-   freshness/data-quality review, and final summary.
+   freshness/data-quality review, and final summary. When a user names explicit months, for
+   example "from February 2026 to March 2026", the plan keeps those periods and does not fall
+   back to the current calendar month.
 3. **Safe execution** — every step calls `AnalysisService`; no investigation code writes SQL or
    touches credentials directly. Missing time columns or dimensions become skipped timeline
    steps with readable limitations.
@@ -308,8 +413,26 @@ Studio keeps conversations useful without widening the safety boundary:
 5. **Frontend timeline and charts** — `app.js` renders investigation timelines and interactive
    charts with fullscreen expansion, hover tooltips, readable date labels, and smooth trend
    lines.
+6. **Saved investigations** — completed investigation results are saved automatically in the
+   project metadata database. The persistence model is:
+   `SavedInvestigationRecord(id, project, analysis_id, conversation_id, title, summary,
+   question, result_json, created_at, updated_at)`.
+7. **Routes** — `studio/routes/investigations.py` exposes:
+   - `GET /api/investigations`
+   - `GET /api/investigations/{id}`
+   - `POST /api/investigations/{id}/rename`
+   - `DELETE /api/investigations/{id}`
+8. **Workspace UI** — `studio_dist/assets/app.js` has route-aware rendering for
+   `#/investigations` and `#/investigations/<id>`, a left saved-investigation list, center
+   result/report view, right context panel, and client-side Markdown/JSON exports.
+9. **Report reading modes** — detailed reports are grouped into Executive, Analyst,
+   Data Quality, and Actions panes. This is frontend grouping over the same `DetailedReport`
+   schema, not a new AI output type.
 
-## 13. Conventions & gotchas
+Saved investigations reuse the already persisted structured `AnalysisResult` JSON. They do not
+create a second query path and do not store credentials.
+
+## 14. Conventions & gotchas
 
 - **Type hints** on all public functions; code must pass `mypy src`.
 - **Custom exceptions** from `insyte.exceptions` (`InsyteError` subclasses) — don't raise bare
@@ -321,6 +444,18 @@ Studio keeps conversations useful without widening the safety boundary:
 - **Semantic-layer dimensions must be FK-joinable.** The query generator finds a join path by
   BFS over scanned foreign keys; a dimension pointing at a **view** (no FKs) can't be joined and
   will raise `JoinPathError`. Point dimensions at real, FK-connected tables.
+- **Semantic aliases must never invent objects.** An alias is valid only if it points to an
+  existing metric or dimension. Keep confidence thresholds conservative; ambiguous aliases
+  should fail closed and let the AI fallback or user clarify.
+- **Count metrics need useful time columns for investigations.** A count over a timestamped
+  business entity table is often preferable to a pre-aggregated measure with no `time_column`
+  because Investigation Mode can run trend and current-vs-previous steps.
+- **Explicit month comparisons are period-aware, not inferred.** Investigation Mode only treats
+  named month/year pairs as historical comparisons when they are present in the question; it does
+  not invent date ranges or assume a hidden business calendar.
+- **Saved investigations live in metadata SQLite.** Adding/changing these tables means old
+  projects may need `Base.metadata.create_all()` to add new tables on Studio startup. Do not
+  make this path require a live warehouse or AI backend.
 - **The SPA has no build step** — edit `studio_dist/assets/*` directly; it ships in the wheel
   (`[tool.hatch.build.targets.wheel]`). Static assets are served with ETag revalidation; a
   browser may need a hard refresh after edits. Run `node --check
@@ -328,7 +463,7 @@ Studio keeps conversations useful without widening the safety boundary:
 - **macOS filesystem is case-insensitive** — project name/dir matching is case-insensitive on
   purpose; keep it that way.
 
-## 14. Publishing
+## 15. Publishing
 
 Full checklist in [PUBLISHING.md](PUBLISHING.md). Short version:
 

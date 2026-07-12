@@ -16,6 +16,10 @@ core feature, not an afterthought.
   can only call validated tools. They cannot obtain the connection URL or execute raw,
   unvalidated SQL. SQL validation, permission checks, row limits, timeouts, PII masking, and
   audit logging apply to every path (from Milestone 4 onward).
+- **Semantic aliases cannot invent data.** Natural-language aliases generated from scanned
+  metadata are routing hints only. They must point to existing metrics or dimensions, carry
+  evidence, and pass semantic validation before use. Low-confidence or ambiguous aliases fail
+  closed rather than silently choosing a target.
 - **Redacted, structured logs.** All logging passes through a redaction filter that masks
   connection URLs and sensitive fields (passwords, tokens, API keys).
 
@@ -37,6 +41,18 @@ deliberately narrow:
 - **It leaves your machine.** The payload goes to your local `claude`/`codex` CLI, which sends
   it to that provider (Anthropic / OpenAI) under your own account. A one-time notice makes this
   explicit before the first report is generated.
+
+## Semantic enrichment and aliases
+
+`insyte semantic generate` uses scanned metadata and existing semantic objects to generate
+suggested metrics, dimensions, entities, and aliases. It does not send data to an AI provider.
+Aliases such as `order count -> sales_order_count` are accepted only when the target exists in
+the semantic layer.
+
+If AI-assisted semantic enrichment is added later, it must remain metadata-only: table names,
+column names/types, relationships, safe profiles, and existing semantic objects. AI suggestions
+must be validated before use and must never introduce unknown tables, columns, filter values, or
+SQL.
 
 ## Recommendations for operators
 

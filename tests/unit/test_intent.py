@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from insyte.analytics.models import TimeGrain
-from insyte.semantic.models import Dimension, Metric, SemanticLayer
+from insyte.semantic.models import Dimension, Metric, SemanticAlias, SemanticLayer
 from insyte.tui.intent import AnalysisMode, IntentKind, parse_intent
 
 
@@ -26,6 +26,10 @@ def layer() -> SemanticLayer:
         dimensions={
             "city": Dimension(source="cities.name"),
             "payment_method": Dimension(source="payments.method"),
+        },
+        aliases={
+            "orders": SemanticAlias(target="order_count", confidence=0.9),
+            "order total": SemanticAlias(target="completed_revenue", confidence=0.84),
         },
     )
 
@@ -88,6 +92,30 @@ def test_aggregate_default(layer: SemanticLayer) -> None:
     intent = parse_intent("payment failure rate", layer)
     assert intent.mode is AnalysisMode.aggregate
     assert intent.metric == "payment_failure_rate"
+
+
+def test_metric_alias_resolves_unexpected_phrase(layer: SemanticLayer) -> None:
+    intent = parse_intent("what caused orders to change this month", layer)
+    assert intent.kind is IntentKind.analysis
+    assert intent.metric == "order_count"
+
+
+def test_low_confidence_alias_does_not_resolve(layer: SemanticLayer) -> None:
+    layer.aliases["random business term"] = SemanticAlias(
+        target="order_count", confidence=0.72
+    )
+    assert parse_intent("random business term", layer).kind is IntentKind.unknown
+
+
+def test_ambiguous_alias_does_not_resolve(layer: SemanticLayer) -> None:
+    layer.metrics["sales_order_count"] = Metric(
+        label="Sales order count", expression="COUNT(*)", source_table="public.sales_orders"
+    )
+    layer.aliases["business volume"] = SemanticAlias(target="order_count", confidence=0.84)
+    layer.aliases["business volume total"] = SemanticAlias(
+        target="sales_order_count", confidence=0.82
+    )
+    assert parse_intent("business volume total", layer).kind is IntentKind.unknown
 
 
 def test_compare(layer: SemanticLayer) -> None:

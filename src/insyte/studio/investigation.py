@@ -11,8 +11,13 @@ import re
 from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
 
-from insyte.analytics.models import AnalysisResult as DomainAnalysisResult
-from insyte.analytics.models import TimeGrain
+from insyte.analytics.models import (
+    AnalysisResult as DomainAnalysisResult,
+)
+from insyte.analytics.models import (
+    Period,
+    TimeGrain,
+)
 from insyte.analytics.periods import periods_for_grain
 from insyte.analytics.report import MAX_REPORT_ROWS
 from insyte.exceptions import InsyteError, QueryValidationError
@@ -24,6 +29,7 @@ from insyte.studio.schemas import (
     AnalysisResult,
     DataFreshness,
     DetailedReport,
+    InvestigationPeriod,
     InvestigationPlan,
     InvestigationResult,
     InvestigationStep,
@@ -39,6 +45,39 @@ _INVESTIGATION_RE = re.compile(
     re.IGNORECASE,
 )
 _PREFERRED_DIMENSIONS = ("city", "category", "payment_method", "brand", "type", "status")
+_MONTHS = {
+    "jan": 1,
+    "january": 1,
+    "feb": 2,
+    "february": 2,
+    "mar": 3,
+    "march": 3,
+    "apr": 4,
+    "april": 4,
+    "may": 5,
+    "jun": 6,
+    "june": 6,
+    "jul": 7,
+    "july": 7,
+    "aug": 8,
+    "august": 8,
+    "sep": 9,
+    "sept": 9,
+    "september": 9,
+    "oct": 10,
+    "october": 10,
+    "nov": 11,
+    "november": 11,
+    "dec": 12,
+    "december": 12,
+}
+_MONTH_RE = re.compile(
+    r"\b("
+    r"jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|"
+    r"aug(?:ust)?|sep(?:t|tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?"
+    r")\s+(\d{4})\b",
+    re.IGNORECASE,
+)
 
 
 def is_investigation_question(question: str, intent: Intent) -> bool:
@@ -70,6 +109,13 @@ class InvestigationService:
         dimension = intent.dimension or _pick_dimension(list(self._layer.dimensions))
         metric_def = self._layer.metrics.get(metric)
         has_time = bool(metric_def and metric_def.time_column)
+        explicit_periods = parse_period_pair(question)
+        current, baseline = explicit_periods if explicit_periods is not None else (None, None)
+        period_label = None
+        if current is not None and baseline is not None:
+            period_label = f"{current.label} vs {baseline.label}"
+        elif has_time:
+            period_label = "current month vs previous month"
 
         steps = [
             InvestigationStep(
@@ -85,7 +131,11 @@ class InvestigationService:
             ),
             InvestigationStep(
                 id="current_vs_previous",
-                title="Compare the current period with the previous period",
+                title=(
+                    f"Compare {current.label} with {baseline.label}"
+                    if current and baseline
+                    else "Compare the current period with the previous period"
+                ),
                 kind="comparison",
                 status="pending" if has_time else "skipped",
                 limitation=(
@@ -96,7 +146,11 @@ class InvestigationService:
             ),
             InvestigationStep(
                 id="segment_breakdown",
-                title="Check the top segment breakdown",
+                title=(
+                    f"Check segment movement from {baseline.label} to {current.label}"
+                    if current and baseline
+                    else "Check the top segment breakdown"
+                ),
                 kind="segment",
                 status="pending" if dimension else "skipped",
                 limitation="" if dimension else "No dimension is available for segment breakdown.",
@@ -116,7 +170,9 @@ class InvestigationService:
             question=question,
             metric=metric,
             dimension=dimension,
-            period="current month vs previous month" if has_time else None,
+            period=period_label,
+            current_period=_period_payload(current),
+            baseline_period=_period_payload(baseline),
             steps=steps,
         )
 
@@ -168,7 +224,7 @@ class InvestigationService:
                     table = table or partial.table
                     report_domains.append(domain)
                 elif step.kind == "comparison":
-                    current, baseline = periods_for_grain(TimeGrain.month)
+                    current, baseline = _comparison_periods(plan)
                     comparison = self._analysis.compare(plan.metric, current, baseline)
                     partial = studio_result_from_comparison(
                         f"{analysis_id}:comparison", comparison, fmt, self._freshness
@@ -185,7 +241,13 @@ class InvestigationService:
                         step.limitation = "No dimension is available for segment breakdown."
                         limitations.append(step.limitation)
                     else:
-                        domain = self._analysis.segment(plan.metric, plan.dimension, limit=10)
+                        current, baseline = _explicit_periods(plan)
+                        if current is not None and baseline is not None:
+                            domain = self._analysis.segment_compare(
+                                plan.metric, plan.dimension, current, baseline, limit=10
+                            )
+                        else:
+                            domain = self._analysis.segment(plan.metric, plan.dimension, limit=10)
                         partial = studio_result_from_analysis(
                             f"{analysis_id}:segment", domain, fmt, self._freshness, []
                         )
@@ -273,6 +335,70 @@ class InvestigationService:
                 yield emit("report_skipped", {"reason": "no_backend"})
         yield emit("investigation_report_ready", {"analysis_id": analysis_id})
         yield result
+
+
+def parse_period_pair(question: str) -> tuple[Period, Period] | None:
+    """Extract an explicit month-over-month comparison from a question.
+
+    Returns ``(current, baseline)``. The parser is deliberately conservative and supports only
+    month/year pairs, which are the periods Investigation Mode can compare deterministically.
+    """
+
+    matches = list(_MONTH_RE.finditer(question))
+    if len(matches) < 2:
+        return None
+    first = _period_from_match(matches[0])
+    second = _period_from_match(matches[1])
+    between = question[matches[0].end() : matches[1].start()].lower()
+    before = question[: matches[0].start()].lower()
+    if "compared to" in between:
+        return first, second
+    if "versus" in between or " vs" in between:
+        return _chronological_pair(first, second)
+    if "from" in before or " to " in f" {between} " or "through" in between:
+        return second, first
+    return second, first
+
+
+def _period_from_match(match: re.Match[str]) -> Period:
+    month_name = match.group(1).lower()
+    year = int(match.group(2))
+    month = _MONTHS[month_name]
+    start = datetime(year, month, 1, tzinfo=UTC)
+    end = _add_months(start, 1)
+    return Period(start.strftime("%b %Y"), start, end)
+
+
+def _add_months(value: datetime, months: int) -> datetime:
+    index = value.month - 1 + months
+    return datetime(value.year + index // 12, index % 12 + 1, 1, tzinfo=UTC)
+
+
+def _chronological_pair(first: Period, second: Period) -> tuple[Period, Period]:
+    return (first, second) if first.start >= second.start else (second, first)
+
+
+def _period_payload(period: Period | None) -> InvestigationPeriod | None:
+    if period is None:
+        return None
+    return InvestigationPeriod(label=period.label, start=period.start, end=period.end)
+
+
+def _period_from_payload(payload: InvestigationPeriod | None) -> Period | None:
+    if payload is None:
+        return None
+    return Period(payload.label, payload.start, payload.end)
+
+
+def _explicit_periods(plan: InvestigationPlan) -> tuple[Period | None, Period | None]:
+    return _period_from_payload(plan.current_period), _period_from_payload(plan.baseline_period)
+
+
+def _comparison_periods(plan: InvestigationPlan) -> tuple[Period, Period]:
+    current, baseline = _explicit_periods(plan)
+    if current is not None and baseline is not None:
+        return current, baseline
+    return periods_for_grain(TimeGrain.month)
 
 
 def _pick_dimension(dimensions: list[str]) -> str | None:
@@ -427,7 +553,7 @@ def _scalar(value: object) -> object:
     if isinstance(value, datetime):
         normalised = value.astimezone(UTC) if value.tzinfo else value.replace(tzinfo=UTC)
         return normalised.isoformat()
-    if value is None or isinstance(value, (bool, int, float, str)):
+    if value is None or isinstance(value, bool | int | float | str):
         return value
     try:
         return float(value)  # type: ignore[arg-type]

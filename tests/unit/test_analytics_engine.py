@@ -117,6 +117,41 @@ def test_segment_uses_join_path() -> None:
     assert "Bengaluru" in result.summary
 
 
+def test_segment_compare_ranks_segment_movement() -> None:
+    ex = FakeExecutor(
+        [
+            _result(
+                [
+                    "segment",
+                    "current_value",
+                    "baseline_value",
+                    "absolute_change",
+                    "contribution_percent",
+                ],
+                [("Bengaluru", 300, 500, -200, 80), ("Mumbai", 100, 150, -50, 20)],
+            )
+        ]
+    )
+    engine = AnalyticsEngine(ex, _layer(), _rels())
+    current = Period(
+        "Mar 2026",
+        datetime(2026, 3, 1, tzinfo=UTC),
+        datetime(2026, 4, 1, tzinfo=UTC),
+    )
+    baseline = Period(
+        "Feb 2026",
+        datetime(2026, 2, 1, tzinfo=UTC),
+        datetime(2026, 3, 1, tzinfo=UTC),
+    )
+
+    result = engine.segment_compare("revenue", "city", current, baseline)
+
+    assert result.kind is AnalysisKind.segment
+    assert result.formatted_rows[0][3] == "₹-200"
+    assert "Bengaluru" in result.summary
+    assert "current_segments" in ex.executed[0]
+
+
 def test_opportunity_ranks_segments() -> None:
     ex = FakeExecutor(
         [

@@ -67,6 +67,9 @@ def test_generate_metrics_and_dimensions() -> None:
     # total_amount → currency format via the name hint.
     assert result.layer.metrics["total_amount"].format.value == "currency"
     assert "status" in result.layer.dimensions
+    assert result.layer.aliases["order count"].target == "order_count"
+    assert result.layer.aliases["order count"].target_type == "metric"
+    assert result.layer.aliases["status"].target == "status"
     assert all(m.status is MetricStatus.suggested for m in result.layer.metrics.values())
 
 
@@ -98,6 +101,61 @@ def test_generate_metrics_from_analysis_ready_view() -> None:
     assert result.layer.metrics["avg_late_return_rate"].format.value == "percent"
     assert "branch_id" not in result.layer.metrics
     assert "branch_name" in result.layer.dimensions
+    assert result.layer.aliases["borrow count"].target == "total_borrow_count"
+
+
+def test_completed_orders_gets_safe_order_count_alias() -> None:
+    opportunity = _detail(
+        "product_opportunity_analysis",
+        "unknown",
+        [
+            _col("product_name", "text"),
+            _col("category_name", "text"),
+            _col("completed_orders", "integer"),
+            _col("sales_revenue", "numeric"),
+        ],
+        kind="view",
+    )
+
+    result = generate_semantic([opportunity], profiles={}, existing=SemanticLayer())
+
+    assert result.layer.metrics["total_completed_orders"].expression == (
+        "SUM(product_opportunity_analysis.completed_orders)"
+    )
+    alias = result.layer.aliases["order count"]
+    assert alias.target == "total_completed_orders"
+    assert alias.confidence >= 0.8
+    assert "metric:total_completed_orders" in alias.evidence
+
+
+def test_timestamped_order_entity_gets_count_metric_and_preferred_alias() -> None:
+    sales_orders = _detail(
+        "sales_orders",
+        "dimension",
+        [
+            _col("sales_order_id", "bigint", pk=True),
+            _col("order_ts", "timestamp"),
+            _col("order_channel", "text"),
+            _col("order_status", "text"),
+        ],
+    )
+    opportunity = _detail(
+        "product_opportunity_analysis",
+        "unknown",
+        [
+            _col("product_name", "text"),
+            _col("category_name", "text"),
+            _col("completed_orders", "integer"),
+            _col("sales_revenue", "numeric"),
+        ],
+        kind="view",
+    )
+
+    result = generate_semantic([opportunity, sales_orders], profiles={}, existing=SemanticLayer())
+
+    assert result.layer.metrics["sales_order_count"].time_column == "sales_orders.order_ts"
+    assert result.layer.aliases["order count"].target == "sales_order_count"
+    assert result.layer.aliases["order count"].confidence > 0.9
 
 
 def test_pii_column_excluded_from_metrics_and_dimensions() -> None:
@@ -155,12 +213,14 @@ def test_validate_flags_bad_references() -> None:
             ),
             "bad_table": Metric(label="Bad", expression="COUNT(*)", source_table="public.ghost"),
             "bad_expr": Metric(label="Bad", expression="SUM(", source_table="public.orders"),
-        }
+        },
+        aliases={"ghost": {"target": "missing_metric", "target_type": "metric"}},
     )
     issues = validate_semantic(layer, index)
     targets = {(i.target, i.level) for i in issues}
     assert ("metric.bad_table", "error") in targets
     assert ("metric.bad_expr", "error") in targets
+    assert ("alias.ghost", "error") in targets
     assert not any(i.target == "metric.good" for i in issues)
 
 

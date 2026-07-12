@@ -61,12 +61,28 @@ class Dimension(BaseModel):
         return ".".join(parts[:-1]) if len(parts) >= 2 else self.source
 
 
+class SemanticAlias(BaseModel):
+    """A safe natural-language alias for an existing semantic object.
+
+    Aliases are routing hints only. They never define new data, SQL, tables, columns, or values.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    target: str
+    target_type: str = "metric"  # metric | dimension
+    confidence: float = 0.5
+    evidence: list[str] = Field(default_factory=list)
+    status: MetricStatus = MetricStatus.suggested
+
+
 class SemanticLayer(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     entities: dict[str, Entity] = Field(default_factory=dict)
     metrics: dict[str, Metric] = Field(default_factory=dict)
     dimensions: dict[str, Dimension] = Field(default_factory=dict)
+    aliases: dict[str, SemanticAlias] = Field(default_factory=dict)
 
     def is_empty(self) -> bool:
-        return not (self.entities or self.metrics or self.dimensions)
+        return not (self.entities or self.metrics or self.dimensions or self.aliases)

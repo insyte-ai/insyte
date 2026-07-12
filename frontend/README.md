@@ -12,7 +12,10 @@ studio` just works.
 implements the workspace shell (header, collapsible sidebar, status bar, light/dark themes),
 the analytics chat with **SSE streaming**, result cards (Overview / Chart / Data / SQL /
 Method / Warnings) with inline SVG charts, and the Schema / Metrics / History / Settings
-pages. It talks only to the documented `/api` endpoints.
+pages. It also includes the saved-investigations workspace (`#/investigations` and
+`#/investigations/<id>`), report reading modes (Executive / Analyst / Data Quality / Actions),
+and client-side Markdown/JSON exports for reports and investigation bundles. It talks only to
+the documented `/api` endpoints.
 
 ## Developing the React version
 
@@ -35,3 +38,11 @@ The frontend depends only on the JSON/SSE contract in
 `src/insyte/studio/routes/`. It must never receive database credentials, and every analytical
 request is streamed from `POST /api/conversations/{id}/messages` → SSE
 `GET /api/analyses/{id}/events`.
+
+Saved investigations are read from:
+
+- `GET /api/investigations`
+- `GET /api/investigations/{id}`
+
+The frontend should treat the saved investigation `result` as a normal `AnalysisResult` and
+reuse the same rendering path as live chat results.

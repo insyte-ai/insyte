@@ -16,6 +16,7 @@ from insyte.semantic.models import (
     Metric,
     MetricFormat,
     MetricStatus,
+    SemanticAlias,
     SemanticLayer,
 )
 
@@ -67,6 +68,7 @@ class GenerationResult:
     added_entities: list[str] = field(default_factory=list)
     added_metrics: list[str] = field(default_factory=list)
     added_dimensions: list[str] = field(default_factory=list)
+    added_aliases: list[str] = field(default_factory=list)
 
 
 def generate_semantic(
@@ -84,6 +86,7 @@ def generate_semantic(
         _add_metrics(detail, profiles, layer, result)
         _add_dimensions(detail, profiles, layer, result)
 
+    _add_aliases(layer, result)
     return result
 
 
@@ -114,16 +117,12 @@ def _add_metrics(
 ) -> None:
     summary = detail.summary
     analytical_source = _is_analysis_ready_source(detail)
-    if not analytical_source and summary.category not in {
-        TableCategory.fact.value,
-        TableCategory.event.value,
-    }:
-        return
+    countable_source = _is_countable_source(detail)
     time_column = _first_timestamp(detail)
     qualified_time = f"{summary.name}.{time_column}" if time_column else None
 
-    count_name = f"{_singularize(summary.name)}_count"
-    if count_name not in layer.metrics:
+    count_name = f"{_singularize(summary.name)}_count" if countable_source else ""
+    if count_name and count_name not in layer.metrics:
         layer.metrics[count_name] = Metric(
             label=_humanize(count_name),
             expression="COUNT(*)",
@@ -134,6 +133,12 @@ def _add_metrics(
             format=MetricFormat.number,
         )
         result.added_metrics.append(count_name)
+
+    if not analytical_source and summary.category not in {
+        TableCategory.fact.value,
+        TableCategory.event.value,
+    }:
+        return
 
     # Exclude primary keys and foreign keys — summing an id column is meaningless.
     key_columns = {c.name for c in detail.columns if c.is_primary_key}
@@ -190,6 +195,115 @@ def _add_dimensions(
         result.added_dimensions.append(dimension_name)
 
 
+def _add_aliases(layer: SemanticLayer, result: GenerationResult) -> None:
+    """Add safe routing aliases for existing metrics and dimensions.
+
+    The aliases never invent new semantics: every alias points at an existing metric/dimension
+    and carries evidence that cites the existing semantic object.
+    """
+
+    for name, metric in layer.metrics.items():
+        evidence = [f"metric:{name}", f"expression:{metric.expression}"]
+        base_confidence = min(0.95, max(0.55, metric.confidence))
+        candidates = {
+            _human_phrase(name): base_confidence,
+            _human_phrase(metric.label): base_confidence,
+        }
+        for alias, confidence in _metric_alias_candidates(name, metric, base_confidence).items():
+            candidates[alias] = max(candidates.get(alias, 0.0), confidence)
+        for alias, confidence in candidates.items():
+            _add_alias(
+                layer,
+                result,
+                phrase=alias,
+                target=name,
+                target_type="metric",
+                confidence=confidence,
+                evidence=evidence,
+            )
+
+    for name, dimension in layer.dimensions.items():
+        evidence = [f"dimension:{name}", f"source:{dimension.source}"]
+        candidates = {_human_phrase(name): 0.82}
+        if dimension.label:
+            candidates[_human_phrase(dimension.label)] = 0.86
+        source_col = dimension.source.split(".")[-1]
+        source_phrase = _human_phrase(source_col)
+        candidates[source_phrase] = max(candidates.get(source_phrase, 0), 0.78)
+        for alias, confidence in candidates.items():
+            _add_alias(
+                layer,
+                result,
+                phrase=alias,
+                target=name,
+                target_type="dimension",
+                confidence=confidence,
+                evidence=evidence,
+            )
+
+
+def _metric_alias_candidates(name: str, metric: Metric, confidence: float) -> dict[str, float]:
+    aliases: dict[str, float] = {}
+    tokens = _semantic_tokens(name)
+    label_tokens = _semantic_tokens(metric.label)
+
+    for source in (tokens, label_tokens):
+        if not source:
+            continue
+        stripped = _strip_aggregate_prefix(source)
+        if stripped and stripped != source:
+            aliases[" ".join(stripped)] = max(aliases.get(" ".join(stripped), 0), confidence - 0.03)
+
+        # COUNT(*) metrics over plural table names: sales_orders -> sales order count.
+        if source[-1] == "count" and len(source) > 1:
+            aliases[" ".join(source[:-1] + ["count"])] = max(
+                aliases.get(" ".join(source[:-1] + ["count"]), 0), confidence
+            )
+            if source[-2:] == ["order", "count"]:
+                score = confidence + (0.08 if "sales" in source else 0.0)
+                if "purchase" in source:
+                    score = confidence - 0.04
+                aliases["order count"] = max(aliases.get("order count", 0), score)
+
+        # Measures like completed_orders are frequently asked as "order count".
+        if source[-1] in {"orders", "order"} or (
+            len(source) > 1 and source[-2:] in (["completed", "orders"], ["completed", "order"])
+        ):
+            aliases["order count"] = max(aliases.get("order count", 0), confidence + 0.07)
+            aliases["orders count"] = max(aliases.get("orders count", 0), confidence + 0.04)
+        if source[-1] in {"items", "item"} and "order" in source:
+            aliases["order item count"] = max(aliases.get("order item count", 0), confidence + 0.03)
+
+    return {alias: min(0.95, score) for alias, score in aliases.items() if alias}
+
+
+def _add_alias(
+    layer: SemanticLayer,
+    result: GenerationResult,
+    *,
+    phrase: str,
+    target: str,
+    target_type: str,
+    confidence: float,
+    evidence: list[str],
+) -> None:
+    normalized = _human_phrase(phrase)
+    if not normalized:
+        return
+    existing = layer.aliases.get(normalized)
+    if existing is not None and existing.confidence >= confidence:
+        return
+    layer.aliases[normalized] = SemanticAlias(
+        target=target,
+        target_type=target_type,
+        confidence=round(confidence, 3),
+        evidence=evidence,
+        status=MetricStatus.suggested,
+    )
+    if normalized not in result.added_aliases:
+        result.added_aliases.append(normalized)
+
+
 def _first_timestamp(detail: TableDetail) -> str | None:
     for column in detail.columns:
         if column.data_type.lower().startswith(_TIMESTAMP_PREFIXES):
@@ -224,6 +338,24 @@ def _is_analysis_ready_source(detail: TableDetail) -> bool:
     text = [c for c in detail.columns if _is_text(c.data_type)]
     measure_like = [c for c in numeric if _measure_score(c.name) > 0]
     return len(text) >= 1 and len(measure_like) >= 2
+
+
+def _is_countable_source(detail: TableDetail) -> bool:
+    """Return true when COUNT(*) is a useful business metric for this table."""
+
+    if detail.summary.kind != TableKind.table.value:
+        return False
+    if detail.summary.category in {TableCategory.bridge.value, TableCategory.configuration.value}:
+        return False
+    if detail.summary.category in {
+        TableCategory.fact.value,
+        TableCategory.event.value,
+        TableCategory.dimension.value,
+        TableCategory.snapshot.value,
+        TableCategory.unknown.value,
+    }:
+        return bool([c for c in detail.columns if c.is_primary_key])
+    return False
 
 
 def _looks_like_identifier(column_name: str) -> bool:
@@ -293,3 +425,19 @@ def _humanize(name: str) -> str:
     """Turn a snake_case identifier into a readable label ('grand_total' -> 'Grand total')."""
 
     return name.replace("_", " ").strip().capitalize()
+
+
+def _human_phrase(text: str) -> str:
+    return " ".join(_semantic_tokens(text))
+
+
+def _semantic_tokens(text: str) -> list[str]:
+    import re
+
+    return [token for token in re.sub(r"[^a-z0-9]+", " ", text.lower()).split() if token]
+
+
+def _strip_aggregate_prefix(tokens: list[str]) -> list[str]:
+    if tokens and tokens[0] in {"total", "sum", "avg", "average"}:
+        return tokens[1:]
+    return tokens

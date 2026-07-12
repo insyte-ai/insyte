@@ -15,7 +15,6 @@ from insyte.analytics.models import (
     AnalysisResult,
     ChartSpec,
     ChartType,
-    Period,
     PeriodComparison,
 )
 from insyte.config import loader, paths
@@ -97,6 +96,30 @@ class FakeAnalysis:
     def segment(self, metric, dimension, period=None, limit=20):
         return self._result()
 
+    def segment_compare(self, metric, dimension, current, baseline, limit=20):
+        return AnalysisResult(
+            kind=AnalysisKind.segment,
+            metric=metric,
+            label="Payment failure rate",
+            columns=[
+                "segment",
+                "current_value",
+                "baseline_value",
+                "absolute_change",
+                "contribution_percent",
+            ],
+            rows=[("card", 0.4, 0.2, 0.2, 100)],
+            formatted_rows=[["card", "40.0%", "20.0%", "20.0%", "100.0%"]],
+            sql="WITH current_segments AS (...)",
+            chart=ChartSpec(ChartType.bar, title="Payment failure rate"),
+            summary=(
+                f"Payment failure rate change by {dimension}: 'card' moved 20.0% "
+                f"from {baseline.label} to {current.label}."
+            ),
+            row_count=1,
+            duration_ms=5.0,
+        )
+
     def opportunity(self, primary_metric, secondary_metric, dimension, period=None, limit=20):
         return AnalysisResult(
             kind=AnalysisKind.opportunity,
@@ -136,16 +159,8 @@ class FakeAnalysis:
         return PeriodComparison(
             metric=metric,
             label="Payment failure rate",
-            current=Period(
-                "current month",
-                datetime(2026, 6, 1, tzinfo=UTC),
-                datetime(2026, 7, 1, tzinfo=UTC),
-            ),
-            baseline=Period(
-                "previous month",
-                datetime(2026, 5, 1, tzinfo=UTC),
-                datetime(2026, 6, 1, tzinfo=UTC),
-            ),
+            current=current,
+            baseline=baseline,
             current_value=0.333,
             baseline_value=0.2,
             absolute_change=0.133,
@@ -260,6 +275,61 @@ def test_investigation_question_streams_timeline(client: TestClient) -> None:
     assert "Investigation for payment failure rate" in result["summary"]
 
 
+def test_investigation_uses_explicit_historical_periods(client: TestClient) -> None:
+    conv = client.post("/api/conversations", json={"title": "Investigation"}).json()
+    posted = client.post(
+        f"/api/conversations/{conv['id']}/messages",
+        json={
+            "content": (
+                "Why did payment failure rate increase from February 2026 to March 2026?"
+            )
+        },
+    ).json()
+    result = _final_result(client.get(posted["stream_url"]).text)
+    plan = result["investigation"]["plan"]
+
+    assert plan["period"] == "Mar 2026 vs Feb 2026"
+    assert plan["current_period"]["label"] == "Mar 2026"
+    assert plan["baseline_period"]["label"] == "Feb 2026"
+    assert "Mar 2026" in plan["steps"][1]["title"]
+    assert any(
+        "from Feb 2026 to Mar 2026" in finding
+        for finding in result["investigation"]["findings"]
+    )
+
+
+def test_investigation_is_saved_and_routeable(client: TestClient) -> None:
+    conv = client.post("/api/conversations", json={"title": "Investigation"}).json()
+    posted = client.post(
+        f"/api/conversations/{conv['id']}/messages",
+        json={"content": "why did payment failure rate increase"},
+    ).json()
+    client.get(posted["stream_url"])
+
+    saved = client.get("/api/investigations").json()["investigations"]
+    assert len(saved) == 1
+    assert saved[0]["id"].startswith("inv_")
+    assert saved[0]["analysis_id"] == posted["analysis_id"]
+    assert saved[0]["conversation_id"] == conv["id"]
+    assert "payment failure rate" in saved[0]["title"].lower()
+
+    detail = client.get(f"/api/investigations/{saved[0]['id']}").json()["investigation"]
+    assert detail["result"]["analysis_id"] == posted["analysis_id"]
+    assert detail["result"]["investigation"]["plan"]["metric"] == "payment_failure_rate"
+
+    renamed = client.post(
+        f"/api/investigations/{saved[0]['id']}/rename",
+        json={"title": "Failure-rate investigation"},
+    ).json()
+    assert renamed == {"renamed": True, "title": "Failure-rate investigation"}
+    assert client.get(f"/api/investigations/{saved[0]['id']}").json()["investigation"][
+        "title"
+    ] == "Failure-rate investigation"
+
+    assert client.delete(f"/api/investigations/{saved[0]['id']}").json() == {"deleted": True}
+    assert client.get("/api/investigations").json()["investigations"] == []
+
+
 def test_detailed_investigation_attaches_report(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -342,6 +412,9 @@ def test_spa_assets_served(client: TestClient) -> None:
     assert "Investigation timeline" in js.text
     assert "openChartFullscreen" in js.text
     assert "chart-tip" in js.text
+    assert "renderInvestigationsPage" in js.text
+    assert "report-mode-btn" in js.text
+    assert "exportMarkdown" in js.text
 
 
 def test_spa_fallback_for_client_routes(client: TestClient) -> None:

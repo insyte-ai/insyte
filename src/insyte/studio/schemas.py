@@ -24,6 +24,10 @@ class ConversationCreate(BaseModel):
     title: str = "New analysis"
 
 
+class TitleUpdate(BaseModel):
+    title: str
+
+
 class MessageRequest(BaseModel):
     content: str
     active_metric: str | None = None
@@ -174,11 +178,19 @@ class InvestigationStep(BaseModel):
     limitation: str = ""
 
 
+class InvestigationPeriod(BaseModel):
+    label: str
+    start: datetime
+    end: datetime
+
+
 class InvestigationPlan(BaseModel):
     question: str
     metric: str
     dimension: str | None = None
     period: str | None = None
+    current_period: InvestigationPeriod | None = None
+    baseline_period: InvestigationPeriod | None = None
     steps: list[InvestigationStep] = Field(default_factory=list)
 
 
@@ -218,9 +230,9 @@ class AnalysisResult(BaseModel):
 
 
 def _cell(value: object) -> object:
-    if value is None or isinstance(value, (bool, int, float, str)):
+    if value is None or isinstance(value, bool | int | float | str):
         return value
-    if isinstance(value, (datetime, date)):
+    if isinstance(value, datetime | date):
         return value.isoformat()
     if isinstance(value, Decimal):
         return float(value)

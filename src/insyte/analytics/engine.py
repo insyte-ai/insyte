@@ -22,7 +22,13 @@ from insyte.analytics.segmentation import rank_contributors
 from insyte.exceptions import DimensionNotFoundError, MetricNotFoundError
 from insyte.metadata.models import RelationshipInfo
 from insyte.query.executor import QueryExecutor
-from insyte.query.generator import aggregate_sql, opportunity_sql, segment_sql, timeseries_sql
+from insyte.query.generator import (
+    aggregate_sql,
+    opportunity_sql,
+    segment_comparison_sql,
+    segment_sql,
+    timeseries_sql,
+)
 from insyte.query.models import ExecutionResult
 from insyte.semantic.models import Dimension, Metric, SemanticLayer
 
@@ -122,6 +128,51 @@ class AnalyticsEngine:
         contributors = rank_contributors(execution.rows)
         formatted = _format_rows(execution.rows, value_index=1, metric=metric)
         summary = _segment_summary(metric, dimension_name, contributors)
+        return AnalysisResult(
+            kind=AnalysisKind.segment,
+            metric=metric_name,
+            label=metric.label,
+            columns=execution.columns,
+            rows=execution.rows,
+            formatted_rows=formatted,
+            sql=execution.normalized_sql,
+            chart=recommend_chart(
+                AnalysisKind.segment, execution.columns, execution.row_count, metric.label
+            ),
+            summary=summary,
+            row_count=execution.row_count,
+            duration_ms=execution.duration_ms,
+            contributors=contributors,
+        )
+
+    def segment_compare(
+        self,
+        metric_name: str,
+        dimension_name: str,
+        current: Period,
+        baseline: Period,
+        limit: int = 20,
+    ) -> AnalysisResult:
+        metric = self._metric(metric_name)
+        dimension = self._dimension(dimension_name)
+        sql = segment_comparison_sql(
+            metric,
+            dimension,
+            self._relationships,
+            current_start=current.start,
+            current_end=current.end,
+            baseline_start=baseline.start,
+            baseline_end=baseline.end,
+            limit=limit,
+        )
+        execution = self._executor.execute(sql, source=_SOURCE)
+        formatted = _format_segment_compare_rows(execution.rows, metric=metric)
+        contributors = rank_contributors(
+            [(row[0], abs(float(row[3] or 0))) for row in execution.rows]
+        )
+        summary = _segment_compare_summary(
+            metric, dimension_name, current, baseline, execution.rows
+        )
         return AnalysisResult(
             kind=AnalysisKind.segment,
             metric=metric_name,
@@ -252,6 +303,28 @@ def _format_opportunity_rows(
     return formatted
 
 
+def _format_segment_compare_rows(
+    rows: list[tuple[object, ...]], *, metric: Metric
+) -> list[list[str]]:
+    formatted: list[list[str]] = []
+    for row in rows:
+        cells = []
+        for index, cell in enumerate(row):
+            if cell is None:
+                cells.append("—")
+            elif index in {1, 2, 3}:
+                cells.append(format_value(cell, metric.format))
+            elif index == 4:
+                try:
+                    cells.append(f"{float(cell):.1f}%")
+                except (TypeError, ValueError):
+                    cells.append(str(cell))
+            else:
+                cells.append(str(cell))
+        formatted.append(cells)
+    return formatted
+
+
 def _segment_summary(metric: Metric, dimension: str, contributors: list) -> str:
     if not contributors:
         return f"{metric.label} by {dimension}: no data."
@@ -260,8 +333,28 @@ def _segment_summary(metric: Metric, dimension: str, contributors: list) -> str:
     return f"{metric.label} by {dimension}: '{top.segment}' leads with {value} ({top.share:.0%})."
 
 
+def _segment_compare_summary(
+    metric: Metric,
+    dimension: str,
+    current: Period,
+    baseline: Period,
+    rows: list[tuple[object, ...]],
+) -> str:
+    if not rows:
+        return (
+            f"{metric.label} change by {dimension}: no segment movement from "
+            f"{baseline.label} to {current.label}."
+        )
+    top = rows[0]
+    change = format_value(top[3], metric.format) if len(top) > 3 else "—"
+    return (
+        f"{metric.label} change by {dimension}: '{top[0]}' moved {change} from "
+        f"{baseline.label} to {current.label}."
+    )
+
+
 def _number(value: object) -> float | None:
-    if isinstance(value, (int, float, str)):
+    if isinstance(value, int | float | str):
         try:
             return float(value)
         except ValueError:

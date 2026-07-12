@@ -56,6 +56,23 @@ def validate_semantic(layer: SemanticLayer, index: SchemaIndex) -> list[Semantic
         issues.extend(_validate_metric(name, metric, index))
     for name, dimension in layer.dimensions.items():
         issues.extend(_validate_reference("dimension", name, dimension.source, index))
+    for phrase, alias in layer.aliases.items():
+        if alias.target_type == "metric" and alias.target not in layer.metrics:
+            issues.append(
+                SemanticIssue("error", f"alias.{phrase}", f"unknown metric '{alias.target}'")
+            )
+        elif alias.target_type == "dimension" and alias.target not in layer.dimensions:
+            issues.append(
+                SemanticIssue(
+                    "error", f"alias.{phrase}", f"unknown dimension '{alias.target}'"
+                )
+            )
+        elif alias.target_type not in {"metric", "dimension"}:
+            issues.append(
+                SemanticIssue(
+                    "error", f"alias.{phrase}", f"unknown target_type '{alias.target_type}'"
+                )
+            )
     for name, entity in layer.entities.items():
         if not index.has_table(entity.table):
             issues.append(

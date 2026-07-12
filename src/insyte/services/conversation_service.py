@@ -8,7 +8,7 @@ from __future__ import annotations
 import uuid
 from typing import TYPE_CHECKING
 
-from insyte.metadata.models import Conversation, ConversationMessage
+from insyte.metadata.models import Conversation, ConversationMessage, SavedInvestigation
 from insyte.metadata.repository import MetadataRepository
 
 if TYPE_CHECKING:
@@ -21,6 +21,10 @@ def new_conversation_id() -> str:
 
 def new_analysis_id() -> str:
     return f"an_{uuid.uuid4().hex[:12]}"
+
+
+def new_investigation_id() -> str:
+    return f"inv_{uuid.uuid4().hex[:12]}"
 
 
 class ConversationService:
@@ -94,3 +98,52 @@ class ConversationService:
 
     def get_analysis_request(self, analysis_id: str) -> tuple[str, str | None] | None:
         return self._metadata.get_analysis_request(analysis_id)
+
+    def save_investigation(
+        self,
+        *,
+        analysis_id: str,
+        question: str,
+        summary: str,
+        result_json: dict,
+        conversation_id: str | None = None,
+        title: str | None = None,
+    ) -> SavedInvestigation:
+        return self._metadata.save_investigation(
+            new_investigation_id(),
+            self._project,
+            analysis_id,
+            title or _investigation_title(question, summary),
+            summary,
+            question,
+            result_json,
+            conversation_id,
+        )
+
+    def investigations(self) -> list[SavedInvestigation]:
+        return self._metadata.list_investigations(self._project)
+
+    def investigation(self, investigation_id: str) -> SavedInvestigation | None:
+        inv = self._metadata.get_investigation(investigation_id)
+        if inv is None or inv.project != self._project:
+            return None
+        return inv
+
+    def set_investigation_title(self, investigation_id: str, title: str) -> bool:
+        inv = self.investigation(investigation_id)
+        if inv is None:
+            return False
+        return self._metadata.set_investigation_title(investigation_id, title)
+
+    def delete_investigation(self, investigation_id: str) -> bool:
+        inv = self.investigation(investigation_id)
+        if inv is None:
+            return False
+        return self._metadata.delete_investigation(investigation_id)
+
+
+def _investigation_title(question: str, summary: str) -> str:
+    title = " ".join((question or summary or "Investigation").split())
+    if len(title) > 64:
+        title = title[:63].rstrip() + "…"
+    return title[:1].upper() + title[1:]

@@ -61,13 +61,22 @@ def analysis_events(
         chat_context = services.conversations.latest_context(conversation_id)
 
     def on_complete(result: AnalysisResult, context: ChatContext | None) -> None:
+        result_payload = result.model_dump(mode="json")
         services.conversations.save_analysis(
             analysis_id,
             job["question"],
             result.summary,
-            result.model_dump_json(),
+            json.dumps(result_payload),
             conversation_id,
         )
+        if result.investigation is not None and result.status == "completed":
+            services.conversations.save_investigation(
+                analysis_id=analysis_id,
+                question=job["question"],
+                summary=result.investigation.summary or result.summary,
+                result_json=result_payload,
+                conversation_id=conversation_id,
+            )
         services.conversations.add_message(
             conversation_id, "assistant", result.summary, analysis_id
         )

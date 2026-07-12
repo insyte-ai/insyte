@@ -53,6 +53,11 @@ insyte init
 3. Insyte then **connects, scans the schema, generates metrics, and installs the MCP server**
    into your chosen tool — no scripts, no environment variables.
 
+Metric generation also creates safe semantic aliases from scanned metadata. For example, if
+your schema has `sales_orders.order_ts`, Insyte can generate `sales_order_count` and understand
+"order count" as that metric. Aliases only point at existing metrics/dimensions and include
+evidence; Insyte does not invent tables, columns, values, or SQL.
+
 ## 4. Ask questions
 
 ### Browser workspace
@@ -67,14 +72,29 @@ Studio also supports:
 
 - **Follow-up context** — ask a metric question, then follow with "same metric last month" or
   "now by payment status".
-- **Investigation Mode Lite** — ask "why did total amount change?" to get a deterministic
-  timeline: trend, current-vs-previous comparison, segment breakdown, data freshness, and next
-  questions.
+- **Investigation Mode Lite** — ask "why did total amount change?" or a date-bound question like
+  "Why did order count drop from February 2026 to March 2026?" to get a deterministic timeline:
+  trend, period-aware comparison, segment breakdown, data freshness, and next questions.
+- **Saved investigations** — completed investigations are saved locally. Open the
+  Investigations workspace from the left sidebar to review the timeline, report, linked result,
+  and export Markdown/JSON.
 - **Detailed reports** — turn on the "Detailed report" tool in the composer for an analyst
   report over the computed result or investigation bundle. Only aggregated, PII-masked outputs
   are sent to your local Claude/Codex CLI; credentials and raw rows are never sent.
 - **Interactive charts** — hover points/bars for values, expand charts fullscreen, and inspect
   smoothed trend lines with readable date labels.
+
+Good investigation prompts use business terms that map to generated metrics:
+
+```text
+What caused order count to change this month?
+Why did total completed orders change by store name?
+Why did revenue drop last month?
+Why did order count drop from February 2026 to March 2026?
+```
+
+If a phrase is ambiguous or unsupported by the scanned schema, Insyte falls back or asks for a
+clearer metric instead of pretending the data exists.
 
 ### Terminal UI
 ```bash
@@ -91,6 +111,7 @@ query. Re-install any time with `insyte mcp install claude` (or `codex`).
 insyte analyze total_amount --grain month        # time series + chart
 insyte analyze total_amount --by city            # segment + chart
 insyte metrics                                    # list the generated metrics
+insyte semantic generate                          # refresh metrics, dimensions, and aliases
 ```
 
 ## Safety — try it

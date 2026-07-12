@@ -28,7 +28,7 @@ _DIALECT = "postgres"
 def _literal(value: str | int | float) -> exp.Expression:
     if isinstance(value, bool):
         return cast(exp.Expression, exp.convert(value))
-    if isinstance(value, (int, float)):
+    if isinstance(value, int | float):
         return exp.Literal.number(value)
     return exp.Literal.string(str(value))
 
@@ -130,6 +130,88 @@ def segment_sql(
     select = _apply_filters(select, metric)
     select = _apply_period(select, metric.time_column, start, end)
     select = select.group_by("1").order_by("value DESC").limit(limit)
+    return select.sql(dialect=_DIALECT)
+
+
+def segment_comparison_sql(
+    metric: Metric,
+    dimension: Dimension,
+    relationships: list[RelationshipInfo],
+    *,
+    current_start: datetime,
+    current_end: datetime,
+    baseline_start: datetime,
+    baseline_end: datetime,
+    limit: int = 20,
+) -> str:
+    """Compare a metric by segment between two explicit periods.
+
+    The result ranks segments by absolute movement so investigations can identify likely
+    drivers instead of showing an all-time aggregate breakdown.
+    """
+
+    current_sql = _segment_base_sql(
+        metric,
+        dimension,
+        relationships,
+        value_alias="current_value",
+        start=current_start,
+        end=current_end,
+    )
+    baseline_sql = _segment_base_sql(
+        metric,
+        dimension,
+        relationships,
+        value_alias="baseline_value",
+        start=baseline_start,
+        end=baseline_end,
+    )
+    return (
+        "WITH current_segments AS ("
+        f"{current_sql}"
+        "), baseline_segments AS ("
+        f"{baseline_sql}"
+        "), joined AS ("
+        "SELECT COALESCE(c.segment, b.segment) AS segment, "
+        "c.current_value, b.baseline_value, "
+        "(COALESCE(c.current_value, 0) - COALESCE(b.baseline_value, 0)) AS absolute_change "
+        "FROM current_segments c "
+        "FULL OUTER JOIN baseline_segments b ON c.segment = b.segment"
+        ") "
+        "SELECT segment, current_value, baseline_value, absolute_change, "
+        "CASE WHEN SUM(ABS(absolute_change)) OVER () = 0 THEN NULL "
+        "ELSE ROUND((ABS(absolute_change) / SUM(ABS(absolute_change)) OVER () * 100)::numeric, 2) "
+        "END AS contribution_percent "
+        "FROM joined "
+        "ORDER BY ABS(absolute_change) DESC NULLS LAST "
+        f"LIMIT {int(limit)}"
+    )
+
+
+def _segment_base_sql(
+    metric: Metric,
+    dimension: Dimension,
+    relationships: list[RelationshipInfo],
+    *,
+    value_alias: str,
+    start: datetime,
+    end: datetime,
+) -> str:
+    select = sqlglot.select(
+        f"{dimension.source} AS segment", f"{metric.expression} AS {value_alias}"
+    )
+    select = select.from_(metric.source_table)
+
+    for step in _join_path(metric.source_table, dimension.table, relationships):
+        on = " AND ".join(
+            f"{_table_name(step.present)}.{pc} = {_table_name(step.added)}.{ac}"
+            for pc, ac in zip(step.present_columns, step.added_columns, strict=False)
+        )
+        select = select.join(step.added, on=on, join_type="inner")
+
+    select = _apply_filters(select, metric)
+    select = _apply_period(select, metric.time_column, start, end)
+    select = select.group_by("1")
     return select.sql(dialect=_DIALECT)
 
 

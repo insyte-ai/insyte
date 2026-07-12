@@ -21,9 +21,17 @@ Two things are always true:
   (`insyte chat`), or directly from **Claude Code / Codex** over MCP.
 - **Trends, breakdowns, opportunity segments, comparisons, and forecasts** over metrics Insyte
   generates from your schema — with charts, tables, and the exact SQL on demand.
-- **Investigation Mode Lite** — ask broader questions like "why did total amount change?" and
-  Studio runs a safe, multi-step investigation: trend, current-vs-previous comparison, segment
+- **Smart semantic aliases** — during semantic generation, Insyte creates safe natural-language
+  aliases from scanned tables, columns, metrics, and dimensions. "order count" can resolve to a
+  real `sales_order_count` metric when the `sales_orders` table exists, but aliases only point
+  at existing semantic objects and carry evidence.
+- **Investigation Mode Lite** — ask broader questions like "why did total amount change?" or
+  explicit comparisons like "Why did order count drop from February 2026 to March 2026?" and
+  Studio runs a safe, multi-step investigation: trend, period-aware comparison, segment
   breakdown, freshness checks, and next questions.
+- **Saved investigations** — completed Studio investigations are saved locally with their
+  timeline, report, original question, and linked analysis result. Reopen them from the
+  Investigations workspace and export Markdown or JSON.
 - **Detailed reports (opt-in)** — flip on "Detailed report" in Studio for an in-depth analyst
   write-up: executive summary, key insights, data-quality flags, root-cause reasoning,
   evidence/counter-evidence, best/expected/worst forecast, and prioritized recommendations, in a
@@ -45,6 +53,18 @@ results, to your local `claude`/`codex` CLI, which forwards it to that provider.
 writes prose — it never sees credentials, never authors SQL, and every chart is built by Insyte
 from real numbers. It's off by default, shows a one-time notice the first time you enable it,
 and can be turned off entirely with `ai.detailed_reports: false` in `config.yaml`.
+
+### Smart aliases without hallucination
+
+Insyte's semantic layer can understand obvious business phrasing without making up data. The
+semantic generator creates aliases such as `order count -> sales_order_count` only when the
+target metric already exists, and every alias stores evidence such as the metric name and
+expression. The parser uses high-confidence aliases after exact metric matching fails; low
+confidence or ambiguous aliases do not run silently.
+
+AI-assisted enrichment can be added later as a bounded review step, but the same rule applies:
+AI may suggest labels and aliases over scanned metadata, never invent tables, columns, values,
+or SQL.
 
 ## Install & set up
 
@@ -111,10 +131,12 @@ or `insyte mcp install codex`.)
 | `insyte chat` | Terminal UI |
 | `insyte analyze <metric> --by <dimension>` | A single analysis from the CLI |
 | `insyte metrics` | List the metrics Insyte generated |
+| `insyte semantic generate` | Regenerate suggested metrics, dimensions, entities, and safe aliases from scanned metadata |
 | `insyte status` / `insyte doctor` | Project state / health checks |
 
 Everything lives under `~/.insyte/projects/<name>/` (config, stored URL, scanned schema,
-metrics). The connection URL is read only when needed and never written to `config.yaml`.
+metrics, aliases, conversations, saved investigations). The connection URL is read only when
+needed and never written to `config.yaml`.
 
 ## Feedback
 

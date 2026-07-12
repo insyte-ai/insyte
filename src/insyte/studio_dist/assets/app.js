@@ -12,6 +12,7 @@
     status: null,
     metrics: null,
     conversations: [],
+    investigations: [],
     conversationId: null,
     detailed: localStorage.getItem("insyte-detailed") === "1",
     busy: false,
@@ -127,12 +128,20 @@
         el("button", { class: "recent-item", title: c.title, onClick: () => openConversation(c.id) }, c.title)
       )
     );
+    const saved = el("div", {},
+      ...state.investigations.slice(0, 10).map((inv) =>
+        el("button", { class: "recent-item", title: inv.title, onClick: () => openInvestigation(inv.id) }, inv.title)
+      )
+    );
     return el("div", { class: "sidebar" },
       el("button", { class: "new-chat", onClick: newChat }, "+  New analysis"),
       el("div", { class: "nav-heading" }, "Workspace"),
       navButton("Chat", "💬", "chat"),
+      navButton("Investigations", "◇", "investigations"),
       el("div", { class: "nav-heading" }, "Recent"),
-      recent
+      recent,
+      el("div", { class: "nav-heading" }, "Saved investigations"),
+      saved
     );
   }
 
@@ -151,7 +160,12 @@
   // ---- router ----------------------------------------------------------------------------
   function currentRoute() {
     const r = (location.hash || "#/chat").replace(/^#\//, "");
-    return ["chat", "schema", "metrics", "history", "settings"].includes(r) ? r : "chat";
+    const base = r.split("/")[0];
+    return ["chat", "schema", "metrics", "history", "settings", "investigations"].includes(base) ? base : "chat";
+  }
+  function currentInvestigationId() {
+    const parts = (location.hash || "").replace(/^#\//, "").split("/");
+    return parts[0] === "investigations" && parts[1] ? decodeURIComponent(parts[1]) : null;
   }
   function route() {
     renderShell();
@@ -159,6 +173,7 @@
     view.innerHTML = "";
     const r = currentRoute();
     if (r === "chat") renderChat(view);
+    else if (r === "investigations") renderInvestigationsPage(view);
     else if (r === "schema") renderSchemaPage(view);
     else if (r === "metrics") renderMetricsPage(view);
     else if (r === "history") renderHistoryPage(view);
@@ -268,6 +283,10 @@
     state.conversationId = id;
     if (currentRoute() !== "chat") { location.hash = "#/chat"; }
     else { route(); }
+  }
+
+  function openInvestigation(id) {
+    location.hash = "#/investigations/" + encodeURIComponent(id);
   }
 
   function ensureConversation() {
@@ -448,6 +467,7 @@
       log.append(renderResult(result));
       log.lastChild.scrollIntoView({ behavior: "smooth", block: "end" });
       refreshConversations();
+      if (result.investigation) refreshInvestigations();
     });
     source.onerror = () => {
       // Fires on our own close too; only act if this stream is still the active one.
@@ -516,6 +536,8 @@
     const tabs = [["Overview", overviewTab(r)]];
     if (hasChart) tabs.push(["Chart", chartTab(r.charts[0])]);
     if (multiRow) tabs.push(["Data", dataTab(r.table)]);
+    if (r.query) tabs.push(["SQL", sqlTab(r.query)]);
+    tabs.push(["Method", methodTab(r)]);
     if (r.warnings && r.warnings.length) tabs.push(["Warnings", el("div", {}, el("div", { class: "warn-box" }, r.warnings.join("; ")))]);
 
     const tabBar = el("div", { class: "tabs" });
@@ -638,78 +660,120 @@
     return el("div", { class: "report-section" }, title);
   }
 
+  function reportModeBlock(mode, ...nodes) {
+    return el("div", { class: "report-mode report-mode-" + mode + (mode === "executive" ? "" : " hidden") }, ...nodes);
+  }
+
+  function setReportMode(wrap, mode) {
+    wrap.querySelectorAll(".report-mode-btn").forEach((btn) => btn.classList.toggle("active", btn.dataset.mode === mode));
+    wrap.querySelectorAll(".report-mode").forEach((pane) => pane.classList.toggle("hidden", !pane.classList.contains("report-mode-" + mode)));
+  }
+
+  function exportJSON(filename, payload) {
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    downloadBlob(filename, blob);
+  }
+
+  function exportMarkdown(filename, r) {
+    downloadBlob(filename, new Blob([reportMarkdown(r)], { type: "text/markdown" }));
+  }
+
+  function downloadBlob(filename, blob) {
+    const a = el("a", { href: URL.createObjectURL(blob), download: filename });
+    document.body.append(a);
+    a.click();
+    setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 0);
+  }
+
   function renderReport(r) {
     const rep = r.report;
     const wrap = el("div", { class: "report" });
     wrap.append(el("div", { class: "report-head" },
       el("span", { class: "report-title" }, "◍ Detailed report"),
-      el("span", { class: "conf-chip " + (rep.confidence_overall || "medium") }, (rep.confidence_overall || "medium") + " confidence")
+      el("div", { class: "report-actions" },
+        el("button", { class: "ghost-btn", onClick: () => exportMarkdown((r.analysis_id || "report") + ".md", r) }, "Markdown"),
+        el("button", { class: "ghost-btn", onClick: () => exportJSON((r.analysis_id || "report") + ".json", r) }, "JSON"),
+        el("span", { class: "conf-chip " + (rep.confidence_overall || "medium") }, (rep.confidence_overall || "medium") + " confidence")
+      )
     ));
-    if (rep.tl_dr) wrap.append(el("div", { class: "tl-dr" }, rep.tl_dr));
-    if (rep.decision) wrap.append(el("div", { class: "decision" }, el("b", {}, "Decision: "), rep.decision));
-    if (rep.executive_summary) wrap.append(el("div", { class: "exec" }, rep.executive_summary));
-    if (r.metrics && r.metrics.length) wrap.append(el("div", { class: "metric-row" }, ...r.metrics.map(metricCard)));
+    const modes = el("div", { class: "report-modes" },
+      ...[
+        ["executive", "Executive"],
+        ["analyst", "Analyst"],
+        ["quality", "Data Quality"],
+        ["actions", "Actions"],
+      ].map(([mode, label]) => el("button", {
+        class: "report-mode-btn" + (mode === "executive" ? " active" : ""),
+        "data-mode": mode,
+        onClick: () => setReportMode(wrap, mode),
+      }, label))
+    );
+    wrap.append(modes);
 
     const charts = reportCharts(r);
-    if (charts.length) wrap.append(el("div", { class: "chart-grid" }, ...charts));
-
+    const executive = [];
+    if (rep.tl_dr) executive.push(el("div", { class: "tl-dr" }, rep.tl_dr));
+    if (rep.decision) executive.push(el("div", { class: "decision" }, el("b", {}, "Decision: "), rep.decision));
+    if (rep.executive_summary) executive.push(el("div", { class: "exec" }, rep.executive_summary));
+    if (r.metrics && r.metrics.length) executive.push(el("div", { class: "metric-row" }, ...r.metrics.map(metricCard)));
+    if (charts.length) executive.push(el("div", { class: "chart-grid" }, ...charts));
     if (rep.key_insights && rep.key_insights.length) {
-      wrap.append(reportSection("Key insights"));
-      wrap.append(el("div", { class: "insights" }, ...rep.key_insights.map(insightCard)));
+      executive.push(reportSection("Key insights"), el("div", { class: "insights" }, ...rep.key_insights.map(insightCard)));
+    }
+    wrap.append(reportModeBlock("executive", ...executive));
+
+    const analyst = [];
+    if (rep.key_insights && rep.key_insights.length) {
+      analyst.push(reportSection("Key insights"), el("div", { class: "insights" }, ...rep.key_insights.map(insightCard)));
     }
     if ((rep.evidence && rep.evidence.length) || (rep.counter_evidence && rep.counter_evidence.length)) {
-      wrap.append(reportSection("Evidence"));
-      wrap.append(evidenceGrid(rep));
+      analyst.push(reportSection("Evidence"), evidenceGrid(rep));
     }
     if (rep.confidence_reasons && rep.confidence_reasons.length) {
-      wrap.append(reportSection("Confidence"));
-      wrap.append(bulletPanel(rep.confidence_reasons));
-    }
-    if (rep.data_quality && rep.data_quality.length) {
-      wrap.append(reportSection("Data quality"));
-      wrap.append(el("div", { class: "dq-strip" }, ...rep.data_quality.map(dqChip)));
+      analyst.push(reportSection("Confidence"), bulletPanel(rep.confidence_reasons));
     }
     const rc = rep.root_cause;
     if (rc && (rc.likely_cause || rc.what_changed)) {
-      wrap.append(reportSection("Root cause"));
-      wrap.append(rootCauseBox(rc));
+      analyst.push(reportSection("Root cause"), rootCauseBox(rc));
     }
     const bi = rep.business_impact;
     if (bi && (bi.narrative || bi.financial_note)) {
-      wrap.append(reportSection("Business impact"));
-      wrap.append(el("div", { class: "impact" },
+      analyst.push(reportSection("Business impact"), el("div", { class: "impact" },
         bi.narrative ? el("div", {}, bi.narrative) : null,
         bi.financial_note ? el("div", { class: "impact-fin" }, bi.financial_note) : null
       ));
     }
     const fc = rep.forecast;
     if (fc && (fc.expected || fc.best_case || fc.worst_case)) {
-      wrap.append(reportSection("Forecast"));
-      wrap.append(forecastPanel(fc));
+      analyst.push(reportSection("Forecast"), forecastPanel(fc));
     }
     if (rep.risks && rep.risks.length) {
-      wrap.append(reportSection("Risks"));
-      wrap.append(el("div", { class: "risks" }, ...rep.risks.map(riskRow)));
+      analyst.push(reportSection("Risks"), el("div", { class: "risks" }, ...rep.risks.map(riskRow)));
     }
+    if (r.query) analyst.push(reportSection("SQL"), sqlTab(r.query));
+    analyst.push(reportSection("Method"), methodTab(r));
+    wrap.append(reportModeBlock("analyst", ...analyst));
+
+    const quality = [];
+    if (rep.data_quality && rep.data_quality.length) quality.push(reportSection("Data quality"), el("div", { class: "dq-strip" }, ...rep.data_quality.map(dqChip)));
+    if (rep.caveats && rep.caveats.length) quality.push(reportSection("Caveats"), bulletPanel(rep.caveats));
+    if (r.limitations && r.limitations.length) quality.push(reportSection("Limitations"), bulletPanel(r.limitations));
+    if (r.warnings && r.warnings.length) quality.push(reportSection("Warnings"), el("div", { class: "warn-box" }, r.warnings.join("; ")));
+    if (r.context) quality.push(contextBox(r.context));
+    wrap.append(reportModeBlock("quality", ...(quality.length ? quality : [el("div", { class: "muted" }, "No data quality issues were reported.")])));
+
+    const actions = [];
     if (rep.recommendations && rep.recommendations.length) {
-      wrap.append(reportSection("Recommendations"));
-      wrap.append(el("div", { class: "recs" }, ...rep.recommendations.map(recCard)));
+      actions.push(reportSection("Recommendations"), el("div", { class: "recs" }, ...rep.recommendations.map(recCard)));
     }
     if (rep.metrics_to_track && rep.metrics_to_track.length) {
-      wrap.append(reportSection("Metrics to track"));
-      wrap.append(el("div", { class: "metric-tags" }, ...rep.metrics_to_track.map((m) => el("span", {}, m))));
+      actions.push(reportSection("Metrics to track"), el("div", { class: "metric-tags" }, ...rep.metrics_to_track.map((m) => el("span", {}, m))));
     }
     if (rep.next_best_questions && rep.next_best_questions.length) {
-      wrap.append(reportSection("Next best questions"));
-      wrap.append(followups(rep.next_best_questions));
+      actions.push(reportSection("Next best questions"), followups(rep.next_best_questions));
     }
-    if (rep.caveats && rep.caveats.length) {
-      wrap.append(el("details", { class: "caveats" },
-        el("summary", {}, "Caveats & limitations"),
-        el("ul", {}, ...rep.caveats.map((c) => el("li", {}, c)))
-      ));
-    }
-    if (r.context) wrap.append(contextBox(r.context));
+    wrap.append(reportModeBlock("actions", ...(actions.length ? actions : [el("div", { class: "muted" }, "No actions were generated for this report.")])));
+
     wrap.append(el("div", { class: "report-foot" },
       "Generated by " + (rep.generated_by || "your AI CLI") + " · commentary over Insyte-computed figures"));
     return wrap;
@@ -872,6 +936,32 @@
       el("div", { class: "rec-action" }, rc.action),
       meta ? el("div", { class: "rec-meta" }, meta) : null
     );
+  }
+
+  function reportMarkdown(r) {
+    const rep = r.report || {};
+    const lines = ["# " + (r.summary || "Insyte report"), ""];
+    if (rep.tl_dr) lines.push("## TL;DR", rep.tl_dr, "");
+    if (rep.decision) lines.push("## Decision", rep.decision, "");
+    if (rep.executive_summary) lines.push("## Executive Summary", rep.executive_summary, "");
+    if (rep.key_insights && rep.key_insights.length) {
+      lines.push("## Key Insights");
+      rep.key_insights.forEach((ins) => {
+        lines.push("- **" + (ins.title || "Insight") + "**: " + (ins.detail || ins.evidence || ""));
+      });
+      lines.push("");
+    }
+    if (rep.evidence && rep.evidence.length) lines.push("## Evidence", ...rep.evidence.map((x) => "- " + x), "");
+    if (rep.counter_evidence && rep.counter_evidence.length) lines.push("## Counter Evidence", ...rep.counter_evidence.map((x) => "- " + x), "");
+    if (rep.recommendations && rep.recommendations.length) {
+      lines.push("## Recommendations");
+      rep.recommendations.forEach((rec) => lines.push("- " + (rec.action || "") + (rec.expected_impact ? " — " + rec.expected_impact : "")));
+      lines.push("");
+    }
+    if (rep.next_best_questions && rep.next_best_questions.length) lines.push("## Next Questions", ...rep.next_best_questions.map((x) => "- " + x), "");
+    if (r.query && r.query.sql) lines.push("## SQL", "```sql", r.query.sql, "```", "");
+    lines.push("_Generated by " + (rep.generated_by || "Insyte") + "._");
+    return lines.join("\n");
   }
 
   // ---- inline SVG chart ------------------------------------------------------------------
@@ -1049,6 +1139,93 @@
     return svg;
   }
 
+  // ---- saved investigations --------------------------------------------------------------
+  function renderInvestigationsPage(view) {
+    const page = el("div", { class: "workspace-page" },
+      el("div", { class: "workspace-left" },
+        el("div", { class: "pane-head" }, "Saved investigations"),
+        el("div", { id: "investigation-list", class: "saved-list" }, el("div", { class: "muted" }, "Loading…"))
+      ),
+      el("div", { class: "workspace-center", id: "investigation-detail" },
+        el("div", { class: "empty-panel" }, "Select an investigation.")
+      ),
+      el("div", { class: "workspace-right", id: "investigation-context" },
+        el("div", { class: "pane-head" }, "Context")
+      )
+    );
+    view.append(page);
+    loadInvestigations(currentInvestigationId());
+  }
+
+  function loadInvestigations(activeId) {
+    getJSON("/investigations").then((data) => {
+      state.investigations = data.investigations || [];
+      renderInvestigationList(activeId);
+      const id = activeId || (state.investigations[0] && state.investigations[0].id);
+      if (id) loadSavedInvestigation(id);
+      else {
+        const detail = $("#investigation-detail");
+        if (detail) detail.innerHTML = '<div class="empty-panel">Run a why/how/change question to save an investigation.</div>';
+      }
+      const sb = document.querySelector(".sidebar");
+      if (sb) sb.replaceWith(renderSidebar());
+    }).catch(showError);
+  }
+
+  function renderInvestigationList(activeId) {
+    const list = $("#investigation-list");
+    if (!list) return;
+    list.innerHTML = "";
+    if (!state.investigations.length) {
+      list.append(el("div", { class: "muted" }, "No saved investigations yet."));
+      return;
+    }
+    state.investigations.forEach((inv) => {
+      list.append(el("button", {
+        class: "saved-row" + (inv.id === activeId ? " active" : ""),
+        onClick: () => openInvestigation(inv.id),
+      },
+        el("span", { class: "saved-title" }, inv.title),
+        el("span", { class: "saved-summary" }, inv.summary || inv.question || "")
+      ));
+    });
+  }
+
+  function loadSavedInvestigation(id) {
+    getJSON("/investigations/" + encodeURIComponent(id)).then((data) => {
+      const inv = data.investigation;
+      renderInvestigationList(inv.id);
+      const detail = $("#investigation-detail");
+      const context = $("#investigation-context");
+      if (!detail || !context) return;
+      detail.innerHTML = "";
+      context.innerHTML = "";
+      const result = inv.result;
+      detail.append(el("div", { class: "saved-head" },
+        el("div", {},
+          el("h2", {}, inv.title),
+          el("div", { class: "muted" }, inv.question)
+        ),
+        el("div", { class: "report-actions" },
+          el("button", { class: "ghost-btn", onClick: () => exportJSON(inv.id + ".json", inv) }, "JSON"),
+          result && result.report ? el("button", { class: "ghost-btn", onClick: () => exportMarkdown(inv.id + ".md", result) }, "Markdown") : null
+        )
+      ));
+      if (result) detail.append(renderResult(result));
+      context.append(el("div", { class: "pane-head" }, "Context"));
+      context.append(el("div", { class: "ctx-list" },
+        el("div", {}, el("span", {}, "Status"), el("b", {}, result ? result.status : "saved")),
+        el("div", {}, el("span", {}, "Analysis"), el("b", {}, inv.analysis_id)),
+        inv.conversation_id ? el("div", {}, el("span", {}, "Conversation"), el("b", {}, inv.conversation_id)) : null,
+        el("div", {}, el("span", {}, "Updated"), el("b", {}, new Date(inv.updated_at).toLocaleString()))
+      ));
+      if (result && result.investigation) context.append(renderInvestigation(result.investigation));
+      if (result && result.report && result.report.next_best_questions && result.report.next_best_questions.length) {
+        context.append(el("div", { class: "pane-head" }, "Next questions"), followups(result.report.next_best_questions));
+      }
+    }).catch(showError);
+  }
+
   function smoothPath(points) {
     if (!points.length) return "";
     if (points.length === 1) return "M " + points[0][0] + " " + points[0][1];
@@ -1158,6 +1335,16 @@
       .catch(() => {});
   }
 
+  function refreshInvestigations() {
+    return getJSON("/investigations")
+      .then((d) => {
+        state.investigations = d.investigations || [];
+        const sb = document.querySelector(".sidebar");
+        if (sb) sb.replaceWith(renderSidebar());
+      })
+      .catch(() => {});
+  }
+
   function showError(err) {
     const view = $("#view");
     if (view) view.append(el("div", { class: "warn-box" }, "Something went wrong: " + err.message));
@@ -1181,6 +1368,7 @@
     try { state.status = await getJSON("/status"); } catch (e) { /* DB may be down */ }
     try { state.metrics = await getJSON("/metrics"); } catch (e) {}
     try { const d = await getJSON("/conversations"); state.conversations = d.conversations || []; } catch (e) {}
+    try { const d = await getJSON("/investigations"); state.investigations = d.investigations || []; } catch (e) {}
     window.addEventListener("hashchange", route);
     route();
   }

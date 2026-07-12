@@ -7,6 +7,7 @@ from insyte.semantic.models import (
     Metric,
     MetricFormat,
     MetricStatus,
+    SemanticAlias,
     SemanticLayer,
 )
 from insyte.semantic.repository import SemanticRepository
@@ -19,6 +20,7 @@ __all__ = [
     "Metric",
     "MetricFormat",
     "MetricStatus",
+    "SemanticAlias",
     "SchemaIndex",
     "SemanticIssue",
     "SemanticLayer",

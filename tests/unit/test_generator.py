@@ -8,7 +8,13 @@ import pytest
 
 from insyte.exceptions import AnalysisError, JoinPathError
 from insyte.metadata.models import RelationshipInfo
-from insyte.query.generator import aggregate_sql, opportunity_sql, segment_sql, timeseries_sql
+from insyte.query.generator import (
+    aggregate_sql,
+    opportunity_sql,
+    segment_comparison_sql,
+    segment_sql,
+    timeseries_sql,
+)
 from insyte.semantic.models import Dimension, Metric
 
 
@@ -65,6 +71,28 @@ def test_segment_direct_join() -> None:
     assert "customers.city AS segment" in sql
     assert "JOIN public.customers ON orders.customer_id = customers.id" in sql
     assert "ORDER BY value DESC" in sql
+
+
+def test_segment_comparison_sql_compares_two_periods() -> None:
+    dimension = Dimension(source="customers.city")
+    rels = [_rel("orders", "customer_id", "customers")]
+    sql = segment_comparison_sql(
+        _revenue(),
+        dimension,
+        rels,
+        current_start=datetime(2026, 3, 1, tzinfo=UTC),
+        current_end=datetime(2026, 4, 1, tzinfo=UTC),
+        baseline_start=datetime(2026, 2, 1, tzinfo=UTC),
+        baseline_end=datetime(2026, 3, 1, tzinfo=UTC),
+        limit=5,
+    )
+
+    assert "WITH current_segments AS" in sql
+    assert "baseline_segments AS" in sql
+    assert "FULL OUTER JOIN baseline_segments" in sql
+    assert "customers.city AS segment" in sql
+    assert "current_value" in sql and "baseline_value" in sql
+    assert "LIMIT 5" in sql
 
 
 def test_segment_two_hop_join() -> None:

@@ -54,11 +54,14 @@ def generate(
     console.print(
         f"Added [green]{len(result.added_metrics)}[/green] metrics, "
         f"[green]{len(result.added_dimensions)}[/green] dimensions, "
-        f"[green]{len(result.added_entities)}[/green] entities "
+        f"[green]{len(result.added_entities)}[/green] entities, "
+        f"[green]{len(result.added_aliases)}[/green] aliases "
         "([yellow]suggested[/yellow])."
     )
     if result.added_metrics:
         console.print("[dim]New metrics:[/dim] " + ", ".join(result.added_metrics))
+    if result.added_aliases:
+        console.print("[dim]New aliases:[/dim] " + ", ".join(result.added_aliases[:12]))
     console.print(
         "\nReview with [bold]insyte metrics[/bold], then "
         "[bold]insyte metrics approve <name>[/bold]."

@@ -39,6 +39,16 @@ class AnalysisService:
     ) -> AnalysisResult:
         return self._engine.segment(metric, dimension, period, limit)
 
+    def segment_compare(
+        self,
+        metric: str,
+        dimension: str,
+        current: Period,
+        baseline: Period,
+        limit: int = 20,
+    ) -> AnalysisResult:
+        return self._engine.segment_compare(metric, dimension, current, baseline, limit)
+
     def opportunity(
         self,
         primary_metric: str,

@@ -36,6 +36,8 @@ from insyte.metadata.models import (
     QueryHistoryRecord,
     RelationshipInfo,
     RelationshipRecord,
+    SavedInvestigation,
+    SavedInvestigationRecord,
     ScannedTable,
     ScanResult,
     ScanRun,
@@ -559,6 +561,82 @@ class MetadataRepository:
                 return None
             return record.question, record.conversation_id
 
+    # -- saved investigations (Studio) ------------------------------------------------------
+
+    def save_investigation(
+        self,
+        investigation_id: str,
+        project: str,
+        analysis_id: str,
+        title: str,
+        summary: str,
+        question: str,
+        result_json: dict,
+        conversation_id: str | None = None,
+    ) -> SavedInvestigation:
+        now = utcnow()
+        with Session(self._engine) as session, session.begin():
+            record = session.execute(
+                select(SavedInvestigationRecord).where(
+                    SavedInvestigationRecord.analysis_id == analysis_id
+                )
+            ).scalar_one_or_none()
+            if record is None:
+                record = SavedInvestigationRecord(
+                    id=investigation_id,
+                    project=project,
+                    analysis_id=analysis_id,
+                    conversation_id=conversation_id,
+                    title=title,
+                    summary=summary,
+                    question=question,
+                    result_json=result_json,
+                    created_at=now,
+                    updated_at=now,
+                )
+                session.add(record)
+            else:
+                record.project = project
+                record.conversation_id = conversation_id
+                record.title = title
+                record.summary = summary
+                record.question = question
+                record.result_json = result_json
+                record.updated_at = now
+            session.flush()
+            return _saved_investigation(record)
+
+    def list_investigations(self, project: str) -> list[SavedInvestigation]:
+        with Session(self._engine) as session:
+            records = session.execute(
+                select(SavedInvestigationRecord)
+                .where(SavedInvestigationRecord.project == project)
+                .order_by(SavedInvestigationRecord.updated_at.desc())
+            ).scalars()
+            return [_saved_investigation(r) for r in records]
+
+    def get_investigation(self, investigation_id: str) -> SavedInvestigation | None:
+        with Session(self._engine) as session:
+            record = session.get(SavedInvestigationRecord, investigation_id)
+            return _saved_investigation(record) if record is not None else None
+
+    def set_investigation_title(self, investigation_id: str, title: str) -> bool:
+        with Session(self._engine) as session, session.begin():
+            record = session.get(SavedInvestigationRecord, investigation_id)
+            if record is None:
+                return False
+            record.title = title
+            record.updated_at = utcnow()
+            return True
+
+    def delete_investigation(self, investigation_id: str) -> bool:
+        with Session(self._engine) as session, session.begin():
+            record = session.get(SavedInvestigationRecord, investigation_id)
+            if record is None:
+                return False
+            session.delete(record)
+            return True
+
     @staticmethod
     def _find_table(session: Session, schema: str | None, name: str) -> TableRecord | None:
         stmt = select(TableRecord).where(TableRecord.name == name)
@@ -643,6 +721,21 @@ def _context_snapshot(record: ConversationContextSnapshotRecord) -> Conversation
         analysis_id=record.analysis_id,
         context_json=dict(record.context_json),
         created_at=record.created_at,
+    )
+
+
+def _saved_investigation(record: SavedInvestigationRecord) -> SavedInvestigation:
+    return SavedInvestigation(
+        id=record.id,
+        project=record.project,
+        analysis_id=record.analysis_id,
+        conversation_id=record.conversation_id,
+        title=record.title,
+        summary=record.summary,
+        question=record.question,
+        result_json=dict(record.result_json),
+        created_at=record.created_at,
+        updated_at=record.updated_at,
     )
 
 
