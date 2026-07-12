@@ -585,8 +585,8 @@
     <div class="hero-cta-row">
       <div class="install-chip">
         <span class="prompt">$</span>
-        <code id="hero-install-cmd">pipx install insyte</code>
-        <button class="copy-btn" data-copy="pipx install insyte" aria-label="Copy install command">
+        <code id="hero-install-cmd">pip install insyte</code>
+        <button class="copy-btn" data-copy="pip install insyte" aria-label="Copy install command">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M4 16V6a2 2 0 0 1 2-2h10"/></svg>
         </button>
       </div>
@@ -687,31 +687,19 @@
   <section class="section" id="install">
     <div class="section-head">
       <p class="kicker">Install &amp; set up</p>
-      <h2>Two commands, then a guided walkthrough.</h2>
+      <h2>Three commands, then a guided walkthrough.</h2>
     </div>
 
     <div class="code-block">
       <div class="code-block-head">
-        <span class="code-block-label">pipx — recommended, isolated environment</span>
-        <button class="copy-btn" data-copy="pipx install insyte&#10;insyte init" aria-label="Copy pipx install commands">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M4 16V6a2 2 0 0 1 2-2h10"/></svg>
-        </button>
-      </div>
-      <pre><span class="c-muted">$</span> pipx install insyte
-<span class="c-muted">$</span> insyte init          <span class="c-muted">## asks for your read-only DB URL and which AI tool, then sets everything up</span></pre>
-    </div>
-    <p class="section-sub" style="margin: -14px 0 26px;">No pipx yet? <code class="inline">brew install pipx</code> on macOS, or <code class="inline">python -m pip install --user pipx &amp;&amp; pipx ensurepath</code>, then reopen your terminal.</p>
-
-    <div class="code-block">
-      <div class="code-block-head">
-        <span class="code-block-label">pip — plain virtual environment</span>
-        <button class="copy-btn" data-copy="python -m venv .venv && source .venv/bin/activate&#10;pip install insyte&#10;insyte init" aria-label="Copy pip install commands">
+        <span class="code-block-label">pip — inside a virtual environment</span>
+        <button class="copy-btn" data-copy="python -m venv .venv && source .venv/bin/activate&#10;pip install insyte&#10;insyte init" aria-label="Copy install commands">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M4 16V6a2 2 0 0 1 2-2h10"/></svg>
         </button>
       </div>
       <pre><span class="c-muted">$</span> python -m venv .venv &amp;&amp; source .venv/bin/activate
 <span class="c-muted">$</span> pip install insyte
-<span class="c-muted">$</span> insyte init</pre>
+<span class="c-muted">$</span> insyte init          <span class="c-muted">## asks for your read-only DB URL and which AI tool, then sets everything up</span></pre>
     </div>
 
     <div class="steps">
