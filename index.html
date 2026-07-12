@@ -579,14 +579,20 @@
   }
   .cmd-cell{
     display:flex;
-    align-items:center;
+    align-items:flex-start;
     gap: 10px;
     font-family: var(--font-mono);
     font-size: 0.85rem;
     color: var(--brass);
     min-width:0;
   }
-  .cmd-cell code{ overflow-x:auto; white-space: nowrap; }
+  .cmd-cell code{
+    white-space: normal;
+    word-break: break-word;
+    line-height: 1.5;
+    padding-top: 1px;
+  }
+  .cmd-copy{ margin-top: 1px; }
   .cmd-desc{ color: var(--text-muted); font-size: 0.88rem; }
   .cmd-copy{
     background: transparent;
@@ -888,12 +894,23 @@
     <div class="code-block" style="margin-top:0;">
       <div class="code-block-head">
         <span class="code-block-label">re-run anytime</span>
-        <button class="copy-btn" data-copy="insyte mcp install claude&#10;insyte mcp install codex" aria-label="Copy MCP install commands">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M4 16V6a2 2 0 0 1 2-2h10"/></svg>
-        </button>
       </div>
-      <pre><span class="c-muted">$</span> insyte mcp install claude
-<span class="c-muted">$</span> insyte mcp install codex</pre>
+      <div class="code-lines">
+        <div class="code-line">
+          <span class="cl-cmd"><span class="c-muted">$</span> insyte mcp install claude</span>
+          <span class="cl-comment">install into Claude Code</span>
+          <button class="cmd-copy" data-copy="insyte mcp install claude" aria-label="Copy insyte mcp install claude">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M4 16V6a2 2 0 0 1 2-2h10"/></svg>
+          </button>
+        </div>
+        <div class="code-line">
+          <span class="cl-cmd"><span class="c-muted">$</span> insyte mcp install codex</span>
+          <span class="cl-comment">install into Codex</span>
+          <button class="cmd-copy" data-copy="insyte mcp install codex" aria-label="Copy insyte mcp install codex">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M4 16V6a2 2 0 0 1 2-2h10"/></svg>
+          </button>
+        </div>
+      </div>
     </div>
   </section>
 
