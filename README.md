@@ -19,8 +19,8 @@ Two things are always true:
   "monthly revenue trend", "what's the expected revenue this year?"
 - **Three ways to use it** — a browser workspace (`insyte studio`), a terminal UI
   (`insyte chat`), or directly from **Claude Code / Codex** over MCP.
-- **Trends, breakdowns, comparisons, and forecasts** over metrics Insyte generates from your
-  schema — with charts, tables, and the exact SQL on demand.
+- **Trends, breakdowns, opportunity segments, comparisons, and forecasts** over metrics Insyte
+  generates from your schema — with charts, tables, and the exact SQL on demand.
 - **Detailed reports (opt-in)** — flip on "Detailed report" in Studio for an in-depth analyst
   write-up: executive summary, key insights, data-quality flags, root-cause reasoning,
   best/expected/worst forecast, and prioritized recommendations, in a visual dashboard. See the
@@ -124,4 +124,3 @@ uv run ruff check src tests && uv run mypy src && uv run pytest -q
 
 See [SECURITY.md](SECURITY.md) for the read-only posture and how to report a vulnerability.
 Licensed under **Apache-2.0** — see [LICENSE](LICENSE).
-

@@ -30,6 +30,19 @@ def _layer() -> SemanticLayer:
                 source_table="public.orders",
                 time_column="orders.created_at",
             ),
+            "margin_rate": Metric(
+                label="Margin rate",
+                expression="AVG(orders.margin_rate)",
+                source_table="public.orders",
+                time_column="orders.created_at",
+                format=MetricFormat.percent,
+            ),
+            "units_sold": Metric(
+                label="Units sold",
+                expression="SUM(orders.quantity)",
+                source_table="public.orders",
+                time_column="orders.created_at",
+            ),
         },
         dimensions={"city": Dimension(source="cities.name", label="City")},
     )
@@ -113,6 +126,24 @@ def test_validate_forecast_mode() -> None:
     res = _validate(data, _layer())
     assert (
         res is not None and res.mode is AnalysisMode.forecast and res.metric == "total_grand_total"
+    )
+
+
+def test_validate_opportunity_mode() -> None:
+    data = {
+        "kind": "analysis",
+        "metric": "margin_rate",
+        "secondary_metric": "units_sold",
+        "mode": "opportunity",
+        "dimension": "city",
+    }
+    res = _validate(data, _layer())
+    assert res == NLResolution(
+        "analysis",
+        metric="margin_rate",
+        secondary_metric="units_sold",
+        mode=AnalysisMode.opportunity,
+        dimension="city",
     )
 
 

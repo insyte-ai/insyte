@@ -31,6 +31,7 @@ class AnalysisMode(StrEnum):
     aggregate = "aggregate"
     timeseries = "timeseries"
     segment = "segment"
+    opportunity = "opportunity"
     compare = "compare"
     forecast = "forecast"
 
@@ -40,6 +41,7 @@ class Intent:
     kind: IntentKind
     mode: AnalysisMode | None = None
     metric: str | None = None
+    secondary_metric: str | None = None
     grain: TimeGrain | None = None
     dimension: str | None = None
     argument: str | None = None

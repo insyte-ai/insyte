@@ -7,6 +7,6 @@ receive database credentials and can never bypass the SQL validation pipeline.
 
 from __future__ import annotations
 
-__version__ = "0.1.0"
+__version__ = "0.2.1"
 
 __all__ = ["__version__"]

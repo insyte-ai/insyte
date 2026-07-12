@@ -22,7 +22,7 @@ from insyte.analytics.segmentation import rank_contributors
 from insyte.exceptions import DimensionNotFoundError, MetricNotFoundError
 from insyte.metadata.models import RelationshipInfo
 from insyte.query.executor import QueryExecutor
-from insyte.query.generator import aggregate_sql, segment_sql, timeseries_sql
+from insyte.query.generator import aggregate_sql, opportunity_sql, segment_sql, timeseries_sql
 from insyte.query.models import ExecutionResult
 from insyte.semantic.models import Dimension, Metric, SemanticLayer
 
@@ -139,6 +139,46 @@ class AnalyticsEngine:
             contributors=contributors,
         )
 
+    def opportunity(
+        self,
+        primary_metric_name: str,
+        secondary_metric_name: str,
+        dimension_name: str,
+        period: Period | None = None,
+        limit: int = 20,
+    ) -> AnalysisResult:
+        primary = self._metric(primary_metric_name)
+        secondary = self._metric(secondary_metric_name)
+        dimension = self._dimension(dimension_name)
+        start, end = _bounds(period)
+        sql = opportunity_sql(
+            primary,
+            secondary,
+            dimension,
+            self._relationships,
+            limit=limit,
+            start=start,
+            end=end,
+        )
+        execution = self._executor.execute(sql, source=_SOURCE)
+        formatted = _format_opportunity_rows(execution.rows, primary=primary, secondary=secondary)
+        summary = _opportunity_summary(primary, secondary, dimension_name, execution.rows)
+        return AnalysisResult(
+            kind=AnalysisKind.opportunity,
+            metric=primary_metric_name,
+            label=f"{primary.label} high / {secondary.label} low",
+            columns=execution.columns,
+            rows=execution.rows,
+            formatted_rows=formatted,
+            sql=execution.normalized_sql,
+            chart=recommend_chart(
+                AnalysisKind.segment, execution.columns, execution.row_count, primary.label
+            ),
+            summary=summary,
+            row_count=execution.row_count,
+            duration_ms=execution.duration_ms,
+        )
+
     def compare(self, metric_name: str, current: Period, baseline: Period) -> PeriodComparison:
         metric = self._metric(metric_name)
         sql_current = aggregate_sql(metric, current.start, current.end)
@@ -187,9 +227,60 @@ def _format_rows(
     return formatted
 
 
+def _format_opportunity_rows(
+    rows: list[tuple[object, ...]], *, primary: Metric, secondary: Metric
+) -> list[list[str]]:
+    formatted: list[list[str]] = []
+    for row in rows:
+        cells = []
+        for index, cell in enumerate(row):
+            if cell is None:
+                cells.append("—")
+            elif index == 1:
+                cells.append(format_value(cell, primary.format))
+            elif index == 2:
+                cells.append(format_value(cell, secondary.format))
+            elif index == 3:
+                score = _number(cell)
+                if score is None:
+                    cells.append(str(cell))
+                else:
+                    cells.append(f"{score * 100:.0f}%")
+            else:
+                cells.append(str(cell))
+        formatted.append(cells)
+    return formatted
+
+
 def _segment_summary(metric: Metric, dimension: str, contributors: list) -> str:
     if not contributors:
         return f"{metric.label} by {dimension}: no data."
     top = contributors[0]
     value = format_value(top.value, metric.format)
     return f"{metric.label} by {dimension}: '{top.segment}' leads with {value} ({top.share:.0%})."
+
+
+def _number(value: object) -> float | None:
+    if isinstance(value, (int, float, str)):
+        try:
+            return float(value)
+        except ValueError:
+            return None
+    return None
+
+
+def _opportunity_summary(
+    primary: Metric, secondary: Metric, dimension: str, rows: list[tuple[object, ...]]
+) -> str:
+    if not rows:
+        return (
+            f"No {dimension} segments had high {primary.label.lower()} with low "
+            f"{secondary.label.lower()}."
+        )
+    top = rows[0]
+    primary_value = format_value(top[1], primary.format) if len(top) > 1 else "—"
+    secondary_value = format_value(top[2], secondary.format) if len(top) > 2 else "—"
+    return (
+        f"Top {dimension} opportunity: '{top[0]}' has {primary.label.lower()} of "
+        f"{primary_value} with {secondary.label.lower()} of {secondary_value}."
+    )

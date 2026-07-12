@@ -184,6 +184,7 @@ class InsyteToolService:
             "recognized": True,
             "intent": mode.value,
             "metric": intent.metric,
+            "secondary_metric": intent.secondary_metric,
             "grain": intent.grain.value if intent.grain else None,
             "dimension": intent.dimension,
             "steps": _plan_steps(intent.metric, mode, intent),
@@ -292,6 +293,14 @@ def _relationship(rel: object) -> dict:
 
 
 def _plan_steps(metric: str, mode: AnalysisMode, intent: object) -> list[str]:
+    if mode is AnalysisMode.opportunity:
+        secondary = getattr(intent, "secondary_metric", None)
+        dimension = getattr(intent, "dimension", None)
+        return [
+            f"Resolve primary metric '{metric}' and secondary metric '{secondary}'",
+            f"Join to dimension '{dimension}' via scanned relationships",
+            "Rank segments where the primary metric is high and the secondary metric is low",
+        ]
     if mode is AnalysisMode.segment:
         dimension = getattr(intent, "dimension", None)
         return [
@@ -314,6 +323,7 @@ def _plan_steps(metric: str, mode: AnalysisMode, intent: object) -> list[str]:
 
 def _suggested_tool(mode: AnalysisMode) -> str:
     return {
+        AnalysisMode.opportunity: "insyte_run_safe_sql",
         AnalysisMode.segment: "insyte_segment_metric",
         AnalysisMode.compare: "insyte_compare_periods",
         AnalysisMode.timeseries: "insyte_run_safe_sql",

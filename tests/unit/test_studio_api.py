@@ -90,6 +90,23 @@ class FakeAnalysis:
     def segment(self, metric, dimension, period=None, limit=20):
         return self._result()
 
+    def opportunity(self, primary_metric, secondary_metric, dimension, period=None, limit=20):
+        return AnalysisResult(
+            kind=AnalysisKind.opportunity,
+            metric=primary_metric,
+            label="Margin rate high / Units sold low",
+            columns=["segment", "primary_value", "secondary_value", "opportunity_score"],
+            rows=[("Bengaluru", 0.42, 12, 0.91)],
+            formatted_rows=[["Bengaluru", "42.0%", "12", "91%"]],
+            sql="WITH segments AS (...)",
+            chart=ChartSpec(ChartType.bar, title="Opportunity"),
+            summary=(
+                "Top city opportunity: 'Bengaluru' has margin rate of 42.0% with units sold of 12."
+            ),
+            row_count=1,
+            duration_ms=5.0,
+        )
+
     def timeseries(self, metric, grain, period=None):
         return self._result()
 
@@ -353,6 +370,44 @@ def test_free_form_forecast_projects_year(
     assert any("projected" in m["label"].lower() for m in result["metrics"])
     assert result["limitations"]  # carries the "estimate, not a guarantee" caveat
     services.dispose()
+
+
+def test_free_form_opportunity_runs_multi_metric_analysis(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from insyte.nl.llm import Backend, NLResolution
+    from insyte.studio import events
+    from insyte.tui.intent import AnalysisMode
+
+    monkeypatch.setattr(events, "available_backends", lambda _pref: [Backend("claude", ["claude"])])
+    monkeypatch.setattr(
+        events,
+        "resolve",
+        lambda *_a, **_k: NLResolution(
+            "analysis",
+            metric="margin_rate",
+            secondary_metric="units_sold",
+            mode=AnalysisMode.opportunity,
+            dimension="city",
+        ),
+    )
+
+    conv = client.post("/api/conversations", json={}).json()
+    posted = client.post(
+        f"/api/conversations/{conv['id']}/messages",
+        json={"content": "where are margins strong but sales volume is low"},
+    ).json()
+    events_text = client.get(posted["stream_url"]).text
+    assert "event: query_started" in events_text
+    result = _final_result(events_text)
+    assert result["status"] == "completed"
+    assert result["table"]["columns"] == [
+        "segment",
+        "primary_value",
+        "secondary_value",
+        "opportunity_score",
+    ]
+    assert "Bengaluru" in result["summary"]
 
 
 def test_detailed_report_attaches(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:

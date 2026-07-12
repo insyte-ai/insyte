@@ -112,6 +112,7 @@ def stream_analysis(
             IntentKind.analysis,
             mode=resolution.mode or AnalysisMode.aggregate,
             metric=resolution.metric,
+            secondary_metric=resolution.secondary_metric,
             grain=resolution.grain,
             dimension=resolution.dimension,
             raw=question,
@@ -204,6 +205,10 @@ def _dispatch(
     if intent.mode is AnalysisMode.forecast:
         result, domain = _forecast(analysis, metric, analysis_id, fmt, data_freshness, suggested)
         return result, inputs(domain, monthly=True)
+    if intent.mode is AnalysisMode.opportunity and intent.secondary_metric and intent.dimension:
+        domain = analysis.opportunity(metric, intent.secondary_metric, intent.dimension, period)
+        result = studio_result_from_analysis(analysis_id, domain, fmt, data_freshness, suggested)
+        return result, inputs(domain, monthly=False)
     if intent.mode is AnalysisMode.segment and intent.dimension:
         domain = analysis.segment(metric, intent.dimension, period)
         result = studio_result_from_analysis(analysis_id, domain, fmt, data_freshness, suggested)

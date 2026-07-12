@@ -133,6 +133,66 @@ def segment_sql(
     return select.sql(dialect=_DIALECT)
 
 
+def opportunity_sql(
+    primary_metric: Metric,
+    secondary_metric: Metric,
+    dimension: Dimension,
+    relationships: list[RelationshipInfo],
+    *,
+    limit: int = 20,
+    start: datetime | None = None,
+    end: datetime | None = None,
+) -> str:
+    """Rank segments where the primary metric is high and the secondary metric is low.
+
+    This supports questions such as "where is margin strong but volume low" by comparing two
+    semantic metrics over the same dimensional breakdown. Both metrics must share a source
+    table so the generated query has one clear grain and join path.
+    """
+
+    if primary_metric.source_table != secondary_metric.source_table:
+        raise AnalysisError("Opportunity analysis requires metrics with the same source_table.")
+
+    select = sqlglot.select(
+        f"{dimension.source} AS segment",
+        f"{primary_metric.expression} AS primary_value",
+        f"{secondary_metric.expression} AS secondary_value",
+    )
+    select = select.from_(primary_metric.source_table)
+
+    for step in _join_path(primary_metric.source_table, dimension.table, relationships):
+        on = " AND ".join(
+            f"{_table_name(step.present)}.{pc} = {_table_name(step.added)}.{ac}"
+            for pc, ac in zip(step.present_columns, step.added_columns, strict=False)
+        )
+        select = select.join(step.added, on=on, join_type="inner")
+
+    select = _apply_filters(select, primary_metric)
+    select = _apply_filters(select, secondary_metric)
+    select = _apply_period(select, primary_metric.time_column, start, end)
+    if secondary_metric.time_column and secondary_metric.time_column != primary_metric.time_column:
+        select = _apply_period(select, secondary_metric.time_column, start, end)
+    select = select.group_by("1")
+
+    segments_sql = select.sql(dialect=_DIALECT)
+    return (
+        "WITH segments AS ("
+        f"{segments_sql}"
+        "), ranked AS ("
+        "SELECT segment, primary_value, secondary_value, "
+        "PERCENT_RANK() OVER (ORDER BY primary_value) AS primary_rank, "
+        "PERCENT_RANK() OVER (ORDER BY secondary_value) AS secondary_rank "
+        "FROM segments "
+        "WHERE primary_value IS NOT NULL AND secondary_value IS NOT NULL"
+        ") "
+        "SELECT segment, primary_value, secondary_value, "
+        "ROUND(((primary_rank + (1 - secondary_rank)) / 2.0)::numeric, 4) AS opportunity_score "
+        "FROM ranked "
+        "ORDER BY opportunity_score DESC, primary_value DESC, secondary_value ASC "
+        f"LIMIT {int(limit)}"
+    )
+
+
 # -- join-path finding -----------------------------------------------------------------------
 
 

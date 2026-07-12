@@ -8,7 +8,7 @@ import pytest
 
 from insyte.exceptions import AnalysisError, JoinPathError
 from insyte.metadata.models import RelationshipInfo
-from insyte.query.generator import aggregate_sql, segment_sql, timeseries_sql
+from insyte.query.generator import aggregate_sql, opportunity_sql, segment_sql, timeseries_sql
 from insyte.semantic.models import Dimension, Metric
 
 
@@ -16,6 +16,16 @@ def _revenue() -> Metric:
     return Metric(
         label="Revenue",
         expression="SUM(orders.total_amount)",
+        source_table="public.orders",
+        filters={"orders.status": ["completed"]},
+        time_column="orders.completed_at",
+    )
+
+
+def _orders_metric(label: str, expression: str) -> Metric:
+    return Metric(
+        label=label,
+        expression=expression,
         source_table="public.orders",
         filters={"orders.status": ["completed"]},
         time_column="orders.completed_at",
@@ -75,6 +85,32 @@ def test_segment_no_path_raises() -> None:
     dimension = Dimension(source="cities.name")
     with pytest.raises(JoinPathError):
         segment_sql(_revenue(), dimension, [])  # no relationships to reach cities
+
+
+def test_opportunity_sql_ranks_high_primary_low_secondary() -> None:
+    dimension = Dimension(source="customers.city")
+    rels = [_rel("orders", "customer_id", "customers")]
+    sql = opportunity_sql(
+        _orders_metric("Margin rate", "AVG(orders.margin_rate)"),
+        _orders_metric("Units sold", "SUM(orders.quantity)"),
+        dimension,
+        rels,
+    )
+    assert "customers.city AS segment" in sql
+    assert "AVG(orders.margin_rate) AS primary_value" in sql
+    assert "SUM(orders.quantity) AS secondary_value" in sql
+    assert "PERCENT_RANK() OVER (ORDER BY primary_value)" in sql
+    assert "1 - secondary_rank" in sql
+    assert "ORDER BY opportunity_score DESC" in sql
+
+
+def test_opportunity_requires_same_source_table() -> None:
+    primary = _orders_metric("Margin rate", "AVG(orders.margin_rate)")
+    secondary = Metric(
+        label="Units sold", expression="SUM(items.quantity)", source_table="public.items"
+    )
+    with pytest.raises(AnalysisError):
+        opportunity_sql(primary, secondary, Dimension(source="orders.status"), [])
 
 
 def test_period_bounds_applied() -> None:

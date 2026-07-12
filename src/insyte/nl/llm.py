@@ -65,6 +65,7 @@ class NLResolution:
     kind: str  # "analysis" | "message"
     text: str | None = None
     metric: str | None = None
+    secondary_metric: str | None = None
     mode: AnalysisMode | None = None
     grain: TimeGrain | None = None
     dimension: str | None = None
@@ -142,6 +143,9 @@ def build_prompt(
         "'compare' for this-period-vs-previous (also set grain); "
         "'forecast' when the user asks for an expected / projected / estimated / extrapolated "
         "future value (e.g. 'expected sales this year') — pick the metric to project; "
+        "'opportunity' when the user asks for segments where one metric is high but another "
+        "metric is low (e.g. high margin and low sales volume) — set metric to the high metric, "
+        "secondary_metric to the low metric, and dimension to the segment to rank; "
         "otherwise 'aggregate'.\n"
         "- period: choose one relative period token for time-scoped questions "
         "(e.g. 'last month' -> last_month), else null / all_time.\n"
@@ -152,7 +156,8 @@ def build_prompt(
         "discount impact). For a greeting or small talk, a short friendly reply.\n\n"
         "Output schema (use exactly these keys):\n"
         '{"kind": "analysis", "metric": "<metric_name>", '
-        '"mode": "aggregate|timeseries|segment|compare|forecast", '
+        '"secondary_metric": "<metric_name>|null", '
+        '"mode": "aggregate|timeseries|segment|opportunity|compare|forecast", '
         '"grain": "day|week|month|quarter|year|null", '
         '"dimension": "<dimension_name>|null", '
         '"period": "<relative_period_token>|null"}\n'
@@ -231,6 +236,7 @@ def _validate(data: dict, layer: SemanticLayer) -> NLResolution | None:
     if metric is None:
         return None
 
+    secondary_metric = _match_key(str(data.get("secondary_metric") or ""), layer.metrics)
     mode = _as_enum(str(data.get("mode") or ""), AnalysisMode) or AnalysisMode.aggregate
     grain = _as_enum(str(data.get("grain") or ""), TimeGrain)
     dimension = _match_key(str(data.get("dimension") or ""), layer.dimensions)
@@ -242,13 +248,21 @@ def _validate(data: dict, layer: SemanticLayer) -> NLResolution | None:
     # Reconcile mode with the fields actually present.
     if mode is AnalysisMode.segment and dimension is None:
         mode = AnalysisMode.aggregate
+    if mode is AnalysisMode.opportunity and (secondary_metric is None or dimension is None):
+        mode = AnalysisMode.aggregate
     if mode is AnalysisMode.timeseries and grain is None:
         grain = TimeGrain.month
     if mode is AnalysisMode.compare and grain is None:
         grain = TimeGrain.month
 
     return NLResolution(
-        "analysis", metric=metric, mode=mode, grain=grain, dimension=dimension, period=period
+        "analysis",
+        metric=metric,
+        secondary_metric=secondary_metric,
+        mode=mode,
+        grain=grain,
+        dimension=dimension,
+        period=period,
     )
 
 

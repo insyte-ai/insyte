@@ -19,6 +19,7 @@ class AnalysisKind(StrEnum):
     aggregate = "aggregate"
     timeseries = "timeseries"
     segment = "segment"
+    opportunity = "opportunity"
     comparison = "comparison"
 
 

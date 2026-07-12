@@ -129,6 +129,7 @@ class ChatController:
             IntentKind.analysis,
             mode=resolution.mode or AnalysisMode.aggregate,
             metric=resolution.metric,
+            secondary_metric=resolution.secondary_metric,
             grain=resolution.grain,
             dimension=resolution.dimension,
             raw=text,
@@ -235,6 +236,13 @@ class ChatController:
         assert metric is not None
         if intent.mode is AnalysisMode.forecast:
             return self._forecast(analysis, metric)
+        if intent.mode is AnalysisMode.opportunity and intent.secondary_metric and intent.dimension:
+            return Response(
+                ResponseKind.analysis,
+                analysis=analysis.opportunity(
+                    metric, intent.secondary_metric, intent.dimension, period
+                ),
+            )
         if intent.mode is AnalysisMode.segment and intent.dimension:
             return Response(
                 ResponseKind.analysis, analysis=analysis.segment(metric, intent.dimension, period)

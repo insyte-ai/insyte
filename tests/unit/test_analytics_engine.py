@@ -48,7 +48,21 @@ def _layer() -> SemanticLayer:
                 source_table="public.orders",
                 time_column="orders.completed_at",
                 format=MetricFormat.currency,
-            )
+            ),
+            "margin_rate": Metric(
+                label="Margin rate",
+                expression="AVG(orders.margin_rate)",
+                source_table="public.orders",
+                time_column="orders.completed_at",
+                format=MetricFormat.percent,
+            ),
+            "units_sold": Metric(
+                label="Units sold",
+                expression="SUM(orders.quantity)",
+                source_table="public.orders",
+                time_column="orders.completed_at",
+                format=MetricFormat.number,
+            ),
         },
         dimensions={"city": Dimension(source="cities.name")},
     )
@@ -100,6 +114,23 @@ def test_segment_uses_join_path() -> None:
     assert result.kind is AnalysisKind.segment
     assert result.contributors[0].segment == "Bengaluru"
     assert "cities" in ex.executed[0]  # join path reached cities
+    assert "Bengaluru" in result.summary
+
+
+def test_opportunity_ranks_segments() -> None:
+    ex = FakeExecutor(
+        [
+            _result(
+                ["segment", "primary_value", "secondary_value", "opportunity_score"],
+                [("Bengaluru", 0.42, 12, 0.91), ("Mumbai", 0.35, 20, 0.75)],
+            )
+        ]
+    )
+    engine = AnalyticsEngine(ex, _layer(), _rels())
+    result = engine.opportunity("margin_rate", "units_sold", "city")
+    assert result.kind is AnalysisKind.opportunity
+    assert result.formatted_rows[0] == ["Bengaluru", "42.0%", "12", "91%"]
+    assert "PERCENT_RANK" in ex.executed[0]
     assert "Bengaluru" in result.summary
 
 
