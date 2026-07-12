@@ -1,1 +1,945 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Insyte — Ask your database. Locally, and safely.</title>
+<meta name="description" content="Insyte turns natural-language questions into safe, read-only database analytics. AI never sees your credentials. Nothing bypasses validation, masking, or the audit log.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="icon" type="image/png" href="assets/favicon.png">
+<style>
+  :root{
+    --bg: #05070D;
+    --surface: #0D1220;
+    --surface-2: #131A2C;
+    --border: #232B44;
+    --border-soft: #1A2136;
+    --text: #E8E9EE;
+    --text-muted: #8B92A8;
+    --text-faint: #565E76;
+    --brass: #8B5FEC;
+    --brass-soft: rgba(139,95,236,0.14);
+    --teal: #2BA8F2;
+    --teal-soft: rgba(43,168,242,0.13);
+    --grad: linear-gradient(135deg, #7C3AED, #0EA5F5);
+    --radius: 10px;
+    --font-display: 'Space Grotesk', sans-serif;
+    --font-body: 'IBM Plex Sans', sans-serif;
+    --font-mono: 'IBM Plex Mono', monospace;
+  }
 
+  *{ box-sizing: border-box; }
+  html{ scroll-behavior: smooth; }
+  body{
+    margin:0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-body);
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  body::before{
+    content:"";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    background-image:
+      linear-gradient(rgba(255,255,255,0.012) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255,255,255,0.012) 1px, transparent 1px);
+    background-size: 42px 42px;
+    z-index: 0;
+  }
+
+  a{ color: inherit; }
+  img,svg{ display:block; }
+
+  .wrap{
+    max-width: 1080px;
+    margin: 0 auto;
+    padding: 0 28px;
+    position: relative;
+    z-index: 1;
+  }
+
+  /* ---------- NAV ---------- */
+  header.nav{
+    position: sticky;
+    top: 0;
+    z-index: 50;
+    backdrop-filter: blur(10px);
+    background: rgba(15,18,22,0.82);
+    border-bottom: 1px solid var(--border-soft);
+  }
+  .nav-inner{
+    display:flex;
+    align-items:center;
+    justify-content: space-between;
+    padding: 16px 28px;
+    max-width: 1080px;
+    margin: 0 auto;
+  }
+  .logo{
+    display:flex;
+    align-items:center;
+    gap:10px;
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: 1.05rem;
+    letter-spacing: 0.01em;
+    text-decoration:none;
+  }
+  .logo-mark{
+    width: 26px; height: 26px;
+    flex-shrink: 0;
+    object-fit: contain;
+  }
+  .nav-links{
+    display:flex;
+    align-items:center;
+    gap: 28px;
+    font-size: 0.92rem;
+    color: var(--text-muted);
+  }
+  .nav-links a{ text-decoration:none; transition: color .15s ease; }
+  .nav-links a:hover{ color: var(--text); }
+  .nav-cta{
+    border:1px solid var(--border);
+    padding: 7px 14px;
+    border-radius: 7px;
+    font-size: 0.86rem;
+    color: var(--text);
+    transition: border-color .15s ease, background .15s ease;
+  }
+  .nav-cta:hover{ border-color: var(--brass); background: var(--brass-soft); }
+  @media (max-width: 640px){
+    .nav-links a:not(.nav-cta){ display:none; }
+  }
+
+  /* ---------- HERO ---------- */
+  .hero{ padding: 88px 0 64px; }
+  .eyebrow{
+    display:inline-flex;
+    align-items:center;
+    gap:8px;
+    font-family: var(--font-mono);
+    font-size: 0.76rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--teal);
+    background: var(--teal-soft);
+    border: 1px solid rgba(63,167,150,0.28);
+    padding: 6px 12px;
+    border-radius: 100px;
+    margin-bottom: 26px;
+  }
+  .eyebrow::before{
+    content:"";
+    width:6px; height:6px;
+    border-radius:50%;
+    background: var(--teal);
+  }
+  h1{
+    font-family: var(--font-display);
+    font-size: clamp(2.1rem, 5vw, 3.4rem);
+    line-height: 1.08;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    margin: 0 0 22px;
+    max-width: 15ch;
+  }
+  h1 em{
+    font-style: normal;
+    background: var(--grad);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  .hero-sub{
+    font-size: 1.1rem;
+    color: var(--text-muted);
+    max-width: 46ch;
+    margin: 0 0 34px;
+  }
+  .hero-cta-row{
+    display:flex;
+    flex-wrap: wrap;
+    align-items:center;
+    gap: 14px;
+    margin-bottom: 62px;
+  }
+  .install-chip{
+    display:flex;
+    align-items:center;
+    gap: 12px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 11px 10px 11px 16px;
+  }
+  .install-chip .prompt{ color: var(--brass); font-family: var(--font-mono); }
+  .install-chip code{
+    font-family: var(--font-mono);
+    font-size: 0.92rem;
+    color: var(--text);
+  }
+  .btn-secondary{
+    display:inline-flex;
+    align-items:center;
+    gap:8px;
+    text-decoration:none;
+    color: var(--text-muted);
+    border: 1px solid var(--border);
+    padding: 12px 18px;
+    border-radius: 8px;
+    font-size: 0.92rem;
+    transition: border-color .15s ease, color .15s ease;
+  }
+  .btn-secondary:hover{ color: var(--text); border-color: #3a4150; }
+
+  /* copy button, shared */
+  .copy-btn{
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-faint);
+    border-radius: 6px;
+    width: 30px; height: 30px;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: border-color .15s ease, color .15s ease, background .15s ease;
+  }
+  .copy-btn:hover{ color: var(--text); border-color: #444c5a; }
+  .copy-btn.copied{ color: var(--teal); border-color: var(--teal); }
+  .copy-btn svg{ width:15px; height:15px; }
+
+  /* ---------- TERMINAL DEMO (signature element) ---------- */
+  .terminal{
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: 0 30px 60px -30px rgba(0,0,0,0.6);
+  }
+  .terminal-bar{
+    display:flex;
+    align-items:center;
+    gap:8px;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border-soft);
+    background: var(--surface-2);
+  }
+  .dot{ width:9px; height:9px; border-radius:50%; background: #3a4150; }
+  .terminal-title{
+    font-family: var(--font-mono);
+    font-size: 0.76rem;
+    color: var(--text-faint);
+    margin-left: 6px;
+  }
+  .terminal-body{
+    padding: 26px 28px 30px;
+    font-family: var(--font-mono);
+    font-size: 0.92rem;
+  }
+  .t-line{ display:flex; gap:10px; margin-bottom: 4px; }
+  .t-prompt{ color: var(--teal); flex-shrink:0; }
+  .t-question{ color: var(--text); }
+  .caret{
+    display:inline-block;
+    width: 7px; height: 1.05em;
+    background: var(--brass);
+    margin-left: 2px;
+    vertical-align: -2px;
+    animation: blink 1s step-end infinite;
+  }
+  @keyframes blink{ 50%{ opacity: 0; } }
+
+  .stamps{
+    display:flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin: 20px 0 20px 22px;
+  }
+  .stamp{
+    display:flex;
+    align-items:center;
+    gap:7px;
+    font-size: 0.78rem;
+    padding: 6px 11px;
+    border-radius: 100px;
+    border: 1px solid rgba(201,162,39,0.35);
+    background: var(--brass-soft);
+    color: var(--brass);
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  .stamp.show{ animation: stampIn .35s ease forwards; }
+  .stamp:nth-child(1).show{ animation-delay: .05s; }
+  .stamp:nth-child(2).show{ animation-delay: .30s; }
+  .stamp:nth-child(3).show{ animation-delay: .55s; }
+  @keyframes stampIn{ to{ opacity:1; transform: translateY(0); } }
+
+  .t-sql{
+    margin: 4px 0 18px 22px;
+    color: var(--text-faint);
+    font-size: 0.84rem;
+    border-left: 2px solid var(--border);
+    padding-left: 14px;
+    opacity: 0;
+  }
+  .t-sql.show{ animation: fadeIn .4s ease forwards; }
+  .t-sql .ro{
+    color: var(--teal);
+    font-size: 0.72rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    border: 1px solid rgba(63,167,150,0.3);
+    padding: 1px 7px;
+    border-radius: 100px;
+    margin-left: 8px;
+  }
+  @keyframes fadeIn{ to{ opacity: 1; } }
+
+  .t-result{
+    margin-left: 22px;
+    opacity: 0;
+  }
+  .t-result.show{ animation: fadeIn .4s ease forwards; }
+  .t-result-label{ color: var(--text-muted); font-size: 0.8rem; margin-bottom: 10px; }
+  .bars{ display:flex; align-items:flex-end; gap: 10px; height: 64px; }
+  .bar{
+    width: 26px;
+    background: linear-gradient(180deg, var(--teal), #1c6aa8);
+    border-radius: 3px 3px 0 0;
+    height: 0%;
+    transition: height 1s cubic-bezier(.2,.8,.2,1);
+  }
+  .bar-label{ font-size: 0.68rem; color: var(--text-faint); text-align:center; margin-top: 6px; width: 26px; }
+  .bars-wrap{ display:flex; gap:10px; align-items:flex-end; }
+  .bars-col{ display:flex; flex-direction:column; align-items:center; }
+
+  @media (prefers-reduced-motion: reduce){
+    .caret{ animation: none; }
+    .stamp, .t-sql, .t-result{ opacity: 1; transform:none; animation:none; }
+    .bar{ transition:none; }
+  }
+
+  /* ---------- GUARANTEES ---------- */
+  .section{ padding: 74px 0; }
+  .section-head{ margin-bottom: 40px; max-width: 60ch; }
+  .kicker{
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+    margin: 0 0 12px;
+  }
+  h2{
+    font-family: var(--font-display);
+    font-size: clamp(1.5rem, 3vw, 2rem);
+    font-weight: 600;
+    margin: 0 0 10px;
+    letter-spacing: -0.005em;
+  }
+  .section-sub{ color: var(--text-muted); font-size: 1rem; margin:0; }
+
+  .guarantees{
+    display:grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+  }
+  @media (max-width: 720px){ .guarantees{ grid-template-columns: 1fr; } }
+  .guarantee-card{
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 28px 26px;
+    position: relative;
+  }
+  .seal{
+    width: 40px; height: 40px;
+    border-radius: 50%;
+    border: 1.5px solid var(--brass);
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    color: var(--brass);
+    margin-bottom: 18px;
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+  }
+  .guarantee-card h3{
+    font-family: var(--font-display);
+    font-size: 1.08rem;
+    font-weight: 600;
+    margin: 0 0 8px;
+  }
+  .guarantee-card p{ color: var(--text-muted); font-size: 0.94rem; margin:0; }
+
+  /* ---------- FEATURES ---------- */
+  .features-grid{
+    display:grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1px;
+    background: var(--border);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+  }
+  @media (max-width: 860px){ .features-grid{ grid-template-columns: repeat(2,1fr); } }
+  @media (max-width: 560px){ .features-grid{ grid-template-columns: 1fr; } }
+  .feature{
+    background: var(--surface);
+    padding: 26px 24px;
+    transition: background .15s ease;
+  }
+  .feature:hover{ background: var(--surface-2); }
+  .feature-icon{
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    color: var(--teal);
+    letter-spacing: 0.08em;
+    margin-bottom: 14px;
+  }
+  .feature h3{
+    font-family: var(--font-display);
+    font-size: 1rem;
+    font-weight: 600;
+    margin: 0 0 8px;
+  }
+  .feature p{ color: var(--text-muted); font-size: 0.9rem; margin:0; }
+
+  /* ---------- CODE BLOCKS ---------- */
+  .code-block{
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    overflow: hidden;
+    margin: 18px 0 28px;
+  }
+  .code-block-head{
+    display:flex;
+    align-items:center;
+    justify-content: space-between;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border-soft);
+    background: var(--surface-2);
+  }
+  .code-block-label{
+    font-family: var(--font-mono);
+    font-size: 0.74rem;
+    color: var(--text-faint);
+    letter-spacing: 0.04em;
+  }
+  .code-block pre{
+    margin:0;
+    padding: 18px 20px;
+    overflow-x: auto;
+    font-family: var(--font-mono);
+    font-size: 0.86rem;
+    line-height: 1.7;
+    color: var(--text);
+  }
+  .code-block pre .c-muted{ color: var(--text-faint); }
+  .code-block pre .c-brass{ color: var(--brass); }
+  .code-block pre .c-teal{ color: var(--teal); }
+
+  /* ---------- STEPS ---------- */
+  .steps{ counter-reset: step; margin-top: 8px; }
+  .step{
+    display:grid;
+    grid-template-columns: 44px 1fr;
+    gap: 18px;
+    padding: 22px 0;
+    border-top: 1px solid var(--border-soft);
+  }
+  .step:last-child{ padding-bottom: 0; }
+  .step-num{
+    counter-increment: step;
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: 0.95rem;
+    color: var(--brass);
+    display:flex;
+    align-items:flex-start;
+    padding-top: 2px;
+  }
+  .step-num::before{ content: counter(step, decimal-leading-zero); }
+  .step h4{ margin: 0 0 6px; font-family: var(--font-display); font-size: 1rem; font-weight: 600; }
+  .step p{ margin:0; color: var(--text-muted); font-size: 0.92rem; }
+
+  /* ---------- COMMANDS TABLE ---------- */
+  .cmd-table{
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+  }
+  .cmd-row{
+    display:grid;
+    grid-template-columns: minmax(180px, 320px) 1fr;
+    gap: 16px;
+    align-items:center;
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--border-soft);
+    background: var(--surface);
+  }
+  .cmd-row:last-child{ border-bottom: none; }
+  .cmd-row:hover{ background: var(--surface-2); }
+  @media (max-width: 640px){
+    .cmd-row{ grid-template-columns: 1fr; }
+  }
+  .cmd-cell{
+    display:flex;
+    align-items:center;
+    gap: 10px;
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    color: var(--brass);
+    min-width:0;
+  }
+  .cmd-cell code{ overflow-x:auto; white-space: nowrap; }
+  .cmd-desc{ color: var(--text-muted); font-size: 0.88rem; }
+  .cmd-copy{
+    background: transparent;
+    border: none;
+    color: var(--text-faint);
+    cursor: pointer;
+    flex-shrink: 0;
+    width: 24px; height: 24px;
+    display:flex; align-items:center; justify-content:center;
+    border-radius: 5px;
+    transition: color .15s ease, background .15s ease;
+  }
+  .cmd-copy:hover{ color: var(--text); background: var(--surface-2); }
+  .cmd-copy.copied{ color: var(--teal); }
+  .cmd-copy svg{ width:13px; height:13px; }
+
+  /* ---------- PRIVACY CALLOUT ---------- */
+  .callout{
+    border: 1px solid rgba(201,162,39,0.3);
+    background: linear-gradient(180deg, var(--brass-soft), rgba(139,95,236,0.03));
+    border-radius: var(--radius);
+    padding: 30px 30px;
+  }
+  .callout-head{ display:flex; align-items:center; gap:12px; margin-bottom: 14px; }
+  .callout h3{ font-family: var(--font-display); font-size: 1.1rem; margin:0; }
+  .callout p{ color: var(--text-muted); margin: 0 0 12px; font-size: 0.95rem; }
+  .callout code.inline, .cmd-desc code.inline, p code.inline{
+    font-family: var(--font-mono);
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    padding: 1px 7px;
+    border-radius: 5px;
+    font-size: 0.85em;
+    color: var(--teal);
+  }
+
+  /* ---------- FOOTER ---------- */
+  footer{
+    border-top: 1px solid var(--border-soft);
+    padding: 46px 0 60px;
+    margin-top: 30px;
+  }
+  .footer-row{
+    display:flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items:flex-start;
+    gap: 28px;
+  }
+  .footer-links{ display:flex; gap: 24px; font-size: 0.88rem; color: var(--text-muted); flex-wrap: wrap; }
+  .footer-links a{ text-decoration:none; }
+  .footer-links a:hover{ color: var(--text); }
+  .footer-note{ color: var(--text-faint); font-size: 0.82rem; max-width: 40ch; }
+
+  ::selection{ background: var(--brass); color: #05070D; }
+</style>
+</head>
+<body>
+
+<header class="nav">
+  <div class="nav-inner">
+    <a href="#" class="logo"><img src="assets/logo-mark.png" alt="" class="logo-mark">insyte</a>
+    <nav class="nav-links">
+      <a href="#guarantees">Guarantees</a>
+      <a href="#features">Features</a>
+      <a href="#install">Install</a>
+      <a href="#commands">Commands</a>
+      <a class="nav-cta" href="https://github.com/insyte-ai/insyte" target="_blank" rel="noopener">GitHub ↗</a>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <!-- HERO -->
+  <section class="hero">
+    <span class="eyebrow">Local-first database analytics</span>
+    <h1>Ask your database questions. In <em>plain English</em> — never with your credentials.</h1>
+    <p class="hero-sub">Insyte connects with a read-only credential, writes the SQL for you, and runs it through a validator, a PII mask, and an audit log before anything executes. The AI never sees your database URL.</p>
+
+    <div class="hero-cta-row">
+      <div class="install-chip">
+        <span class="prompt">$</span>
+        <code id="hero-install-cmd">pipx install insyte</code>
+        <button class="copy-btn" data-copy="pipx install insyte" aria-label="Copy install command">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M4 16V6a2 2 0 0 1 2-2h10"/></svg>
+        </button>
+      </div>
+      <a class="btn-secondary" href="#install">Read the setup guide →</a>
+    </div>
+
+    <div class="terminal">
+      <div class="terminal-bar">
+        <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+        <span class="terminal-title">insyte studio — read-only session</span>
+      </div>
+      <div class="terminal-body">
+        <div class="t-line">
+          <span class="t-prompt">?</span>
+          <span class="t-question" id="typed-question"></span><span class="caret" id="type-caret"></span>
+        </div>
+
+        <div class="stamps" id="stamps">
+          <span class="stamp" id="stamp-1">✓ validated</span>
+          <span class="stamp" id="stamp-2">✓ pii masked</span>
+          <span class="stamp" id="stamp-3">✓ audit logged</span>
+        </div>
+
+        <div class="t-sql" id="t-sql">
+          SELECT city, SUM(total_amount) FROM orders WHERE created_at >= date_trunc('month', now() - interval '1 month') GROUP BY city; <span class="ro">read-only</span>
+        </div>
+
+        <div class="t-result" id="t-result">
+          <div class="t-result-label">revenue by city — last month</div>
+          <div class="bars-wrap" id="bars"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- GUARANTEES -->
+  <section class="section" id="guarantees">
+    <div class="section-head">
+      <p class="kicker">Two things are always true</p>
+      <h2>Nothing gets between the guardrail and the query.</h2>
+    </div>
+    <div class="guarantees">
+      <div class="guarantee-card">
+        <div class="seal">01</div>
+        <h3>AI models never see your credentials</h3>
+        <p>The connection URL stays in a file on your machine, permissioned <code class="inline">0600</code>. It's never written to config, never logged, and never sent to any model.</p>
+      </div>
+      <div class="guarantee-card">
+        <div class="seal">02</div>
+        <h3>Nothing bypasses the safety layer</h3>
+        <p>Every query passes through Insyte's SQL validation, row limits, PII masking, and audit log. A dangerous query is rejected before it ever reaches your database — not executed and cleaned up after.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- FEATURES -->
+  <section class="section" id="features">
+    <div class="section-head">
+      <p class="kicker">What you can do</p>
+      <h2>One question in, a grounded answer out.</h2>
+      <p class="section-sub">Everything below runs against real numbers Insyte computes from your schema — no hallucinated metrics.</p>
+    </div>
+    <div class="features-grid">
+      <div class="feature">
+        <div class="feature-icon">STUDIO / CHAT / MCP</div>
+        <h3>Three ways to use it</h3>
+        <p>A browser workspace, a terminal UI, or straight from Claude Code / Codex over MCP.</p>
+      </div>
+      <div class="feature">
+        <div class="feature-icon">TRENDS &amp; FORECASTS</div>
+        <h3>Breakdowns and comparisons</h3>
+        <p>Trends, segments, and forecasts over metrics generated from your schema, with the exact SQL on demand.</p>
+      </div>
+      <div class="feature">
+        <div class="feature-icon">INVESTIGATION MODE LITE</div>
+        <h3>Ask "why did it change?"</h3>
+        <p>Studio runs a safe, multi-step investigation: trend, comparison, segment breakdown, freshness checks, next questions.</p>
+      </div>
+      <div class="feature">
+        <div class="feature-icon">DETAILED REPORTS · OPT-IN</div>
+        <h3>Full analyst write-ups</h3>
+        <p>Executive summary, root-cause reasoning, evidence and counter-evidence, and a best / expected / worst forecast.</p>
+      </div>
+      <div class="feature">
+        <div class="feature-icon">CHARTS</div>
+        <h3>Built to inspect, not just glance</h3>
+        <p>Hover tooltips, readable date labels, fullscreen views, and smooth trend lines.</p>
+      </div>
+      <div class="feature">
+        <div class="feature-icon">CONTEXT</div>
+        <h3>Follow-ups that just work</h3>
+        <p>Studio remembers the metric, dimension, and period so "same thing last month" resolves correctly.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- INSTALL -->
+  <section class="section" id="install">
+    <div class="section-head">
+      <p class="kicker">Install &amp; set up</p>
+      <h2>Two commands, then a guided walkthrough.</h2>
+    </div>
+
+    <div class="code-block">
+      <div class="code-block-head">
+        <span class="code-block-label">pipx — recommended, isolated environment</span>
+        <button class="copy-btn" data-copy="pipx install insyte&#10;insyte init" aria-label="Copy pipx install commands">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M4 16V6a2 2 0 0 1 2-2h10"/></svg>
+        </button>
+      </div>
+      <pre><span class="c-muted">$</span> pipx install insyte
+<span class="c-muted">$</span> insyte init          <span class="c-muted">## asks for your read-only DB URL and which AI tool, then sets everything up</span></pre>
+    </div>
+    <p class="section-sub" style="margin: -14px 0 26px;">No pipx yet? <code class="inline">brew install pipx</code> on macOS, or <code class="inline">python -m pip install --user pipx &amp;&amp; pipx ensurepath</code>, then reopen your terminal.</p>
+
+    <div class="code-block">
+      <div class="code-block-head">
+        <span class="code-block-label">pip — plain virtual environment</span>
+        <button class="copy-btn" data-copy="python -m venv .venv && source .venv/bin/activate&#10;pip install insyte&#10;insyte init" aria-label="Copy pip install commands">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M4 16V6a2 2 0 0 1 2-2h10"/></svg>
+        </button>
+      </div>
+      <pre><span class="c-muted">$</span> python -m venv .venv &amp;&amp; source .venv/bin/activate
+<span class="c-muted">$</span> pip install insyte
+<span class="c-muted">$</span> insyte init</pre>
+    </div>
+
+    <div class="steps">
+      <div class="step">
+        <span class="step-num"></span>
+        <div>
+          <h4>Give it a read-only URL</h4>
+          <p>Stored once in a <code class="inline">0600</code> file — never in config, never logged, never sent to an AI.</p>
+        </div>
+      </div>
+      <div class="step">
+        <span class="step-num"></span>
+        <div>
+          <h4>Pick your AI tool</h4>
+          <p>Claude Code, Codex, or none — Studio still answers metric questions without one.</p>
+        </div>
+      </div>
+      <div class="step">
+        <span class="step-num"></span>
+        <div>
+          <h4>Let it scan and wire up</h4>
+          <p>Insyte connects, scans the schema, generates metrics, and wires up your AI tool. No scripts, no environment variables.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="code-block" style="margin-top: 32px;">
+      <div class="code-block-head">
+        <span class="code-block-label">then, use it</span>
+        <button class="copy-btn" data-copy="insyte studio        # browser workspace at http://127.0.0.1:3838&#10;insyte chat           # terminal UI&#10;insyte analyze total_amount --by city" aria-label="Copy usage commands">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M4 16V6a2 2 0 0 1 2-2h10"/></svg>
+        </button>
+      </div>
+      <pre><span class="c-muted">$</span> insyte studio        <span class="c-muted">## browser workspace at http://127.0.0.1:3838</span>
+<span class="c-muted">$</span> insyte chat           <span class="c-muted">## terminal UI</span>
+<span class="c-muted">$</span> insyte analyze total_amount --by city</pre>
+    </div>
+
+    <p class="section-sub"><strong style="color:var(--text);font-weight:600;">Requirements:</strong> Python 3.11+, a PostgreSQL database, and — for natural-language questions — the <code class="inline">claude</code> or <code class="inline">codex</code> CLI.</p>
+
+    <div class="code-block" style="margin-top: 22px;">
+      <div class="code-block-head">
+        <span class="code-block-label">recommended — a dedicated read-only role</span>
+        <button class="copy-btn" data-copy="CREATE ROLE insyte_reader LOGIN PASSWORD '…';&#10;GRANT CONNECT ON DATABASE your_db TO insyte_reader;&#10;GRANT USAGE ON SCHEMA public TO insyte_reader;&#10;GRANT SELECT ON ALL TABLES IN SCHEMA public TO insyte_reader;" aria-label="Copy SQL for read-only role">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M4 16V6a2 2 0 0 1 2-2h10"/></svg>
+        </button>
+      </div>
+      <pre><span class="c-brass">CREATE ROLE</span> insyte_reader <span class="c-brass">LOGIN PASSWORD</span> '…';
+<span class="c-brass">GRANT CONNECT ON DATABASE</span> your_db <span class="c-brass">TO</span> insyte_reader;
+<span class="c-brass">GRANT USAGE ON SCHEMA</span> public <span class="c-brass">TO</span> insyte_reader;
+<span class="c-brass">GRANT SELECT ON ALL TABLES IN SCHEMA</span> public <span class="c-brass">TO</span> insyte_reader;</pre>
+    </div>
+    <p class="section-sub" style="margin-top:-10px;">Insyte enforces read-only regardless — a dedicated account is just an extra layer.</p>
+  </section>
+
+  <!-- CLAUDE CODE / CODEX -->
+  <section class="section">
+    <div class="section-head">
+      <p class="kicker">From your agent</p>
+      <h2>Use it from Claude Code or Codex directly.</h2>
+      <p class="section-sub"><code class="inline">insyte init</code> already installs the Insyte MCP server into your chosen tool. Restart it, then ask questions in plain language — your agent calls Insyte's safe tools, which validate, run read-only, mask PII, and audit every query.</p>
+    </div>
+    <div class="code-block" style="margin-top:0;">
+      <div class="code-block-head">
+        <span class="code-block-label">re-run anytime</span>
+        <button class="copy-btn" data-copy="insyte mcp install claude&#10;insyte mcp install codex" aria-label="Copy MCP install commands">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M4 16V6a2 2 0 0 1 2-2h10"/></svg>
+        </button>
+      </div>
+      <pre><span class="c-muted">$</span> insyte mcp install claude
+<span class="c-muted">$</span> insyte mcp install codex</pre>
+    </div>
+  </section>
+
+  <!-- COMMANDS -->
+  <section class="section" id="commands">
+    <div class="section-head">
+      <p class="kicker">Handy commands</p>
+      <h2>A quick reference.</h2>
+      <p class="section-sub">Everything lives under <code class="inline">~/.insyte/projects/&lt;name&gt;/</code>. The connection URL is read only when needed and never written to <code class="inline">config.yaml</code>.</p>
+    </div>
+    <div class="cmd-table" id="cmd-table">
+      <!-- rows injected by JS -->
+    </div>
+  </section>
+
+  <!-- PRIVACY CALLOUT -->
+  <section class="section">
+    <div class="callout">
+      <div class="callout-head">
+        <div class="seal" style="margin:0;">i</div>
+        <h3>Detailed reports &amp; your privacy</h3>
+      </div>
+      <p>Everything above keeps your data on your machine. The one opt-in exception is the <strong style="color:var(--text);">Detailed report</strong>: to write analyst commentary, Insyte sends the already-aggregated, PII-masked result of your query — or a grounded investigation bundle built from those results — to your local <code class="inline">claude</code> / <code class="inline">codex</code> CLI, which forwards it to that provider.</p>
+      <p>The AI only writes prose — it never sees credentials, never authors SQL, and every chart is built by Insyte from real numbers. It's off by default, shows a one-time notice the first time you enable it, and can be turned off entirely with:</p>
+      <div class="code-block" style="margin: 0;">
+        <div class="code-block-head">
+          <span class="code-block-label">config.yaml</span>
+          <button class="copy-btn" data-copy="ai.detailed_reports: false" aria-label="Copy config line">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M4 16V6a2 2 0 0 1 2-2h10"/></svg>
+          </button>
+        </div>
+        <pre>ai.detailed_reports: <span class="c-teal">false</span></pre>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  <div class="wrap footer-row">
+    <div>
+      <a href="#" class="logo" style="margin-bottom:10px;"><img src="assets/logo-mark.png" alt="" class="logo-mark">insyte</a>
+      <p class="footer-note">Read-only by design. Licensed under Apache-2.0.</p>
+    </div>
+    <div class="footer-links">
+      <a href="https://github.com/insyte-ai/insyte" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://github.com/insyte-ai/insyte/issues" target="_blank" rel="noopener">Report an issue</a>
+      <a href="https://github.com/insyte-ai/insyte/blob/main/SECURITY.md" target="_blank" rel="noopener">Security</a>
+      <a href="https://github.com/insyte-ai/insyte/blob/main/LICENSE" target="_blank" rel="noopener">License</a>
+    </div>
+  </div>
+</footer>
+
+<script>
+  // ---------- Copy to clipboard (all buttons) ----------
+  function wireCopyButtons(root){
+    root.querySelectorAll('.copy-btn, .cmd-copy').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        var text = btn.getAttribute('data-copy') || '';
+        text = text.replace(/&#10;/g, '\n');
+        navigator.clipboard.writeText(text).then(function(){
+          var original = btn.innerHTML;
+          btn.classList.add('copied');
+          btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5"/></svg>';
+          setTimeout(function(){
+            btn.classList.remove('copied');
+            btn.innerHTML = original;
+          }, 1400);
+        }).catch(function(){});
+      });
+    });
+  }
+  wireCopyButtons(document);
+
+  // ---------- Commands table ----------
+  var commands = [
+    ['insyte init', 'Guided setup: DB URL + AI tool → connect, scan, metrics, MCP'],
+    ['insyte studio', 'Browser workspace (localhost only)'],
+    ['insyte chat', 'Terminal UI'],
+    ['insyte analyze &lt;metric&gt; --by &lt;dimension&gt;', 'A single analysis from the CLI'],
+    ['insyte metrics', 'List the metrics Insyte generated'],
+    ['insyte status', 'Project state'],
+    ['insyte doctor', 'Health checks']
+  ];
+  var table = document.getElementById('cmd-table');
+  commands.forEach(function(row){
+    var plain = row[0].replace(/&lt;/g,'<').replace(/&gt;/g,'>');
+    var div = document.createElement('div');
+    div.className = 'cmd-row';
+    div.innerHTML =
+      '<div class="cmd-cell"><code>' + row[0] + '</code>' +
+      '<button class="cmd-copy" data-copy="' + plain.replace(/"/g,'&quot;') + '" aria-label="Copy command">' +
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M4 16V6a2 2 0 0 1 2-2h10"/></svg>' +
+      '</button></div>' +
+      '<div class="cmd-desc">' + row[1] + '</div>';
+    table.appendChild(div);
+  });
+  wireCopyButtons(table);
+
+  // ---------- Hero terminal demo ----------
+  var reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var question = "what were total sales last month?";
+  var qEl = document.getElementById('typed-question');
+  var caret = document.getElementById('type-caret');
+
+  function showStamps(){
+    ['stamp-1','stamp-2','stamp-3'].forEach(function(id){
+      document.getElementById(id).classList.add('show');
+    });
+  }
+  function showSql(){ document.getElementById('t-sql').classList.add('show'); }
+  function showResult(){
+    document.getElementById('t-result').classList.add('show');
+    buildBars();
+  }
+  function buildBars(){
+    var wrap = document.getElementById('bars');
+    var data = [
+      ['Bengaluru', 82], ['Mumbai', 68], ['Delhi', 54], ['Pune', 41], ['Chennai', 33]
+    ];
+    data.forEach(function(d, i){
+      var col = document.createElement('div');
+      col.className = 'bars-col';
+      var bar = document.createElement('div');
+      bar.className = 'bar';
+      col.appendChild(bar);
+      var label = document.createElement('div');
+      label.className = 'bar-label';
+      label.textContent = d[0];
+      col.appendChild(label);
+      wrap.appendChild(col);
+      setTimeout(function(){ bar.style.height = d[1] + '%'; }, 60 + i * 90);
+    });
+  }
+
+  if (reduceMotion) {
+    qEl.textContent = question;
+    caret.style.display = 'none';
+    showStamps();
+    showSql();
+    showResult();
+  } else {
+    var i = 0;
+    (function type(){
+      if (i <= question.length){
+        qEl.textContent = question.slice(0, i);
+        i++;
+        setTimeout(type, 32);
+      } else {
+        caret.style.display = 'none';
+        setTimeout(showStamps, 250);
+        setTimeout(showSql, 900);
+        setTimeout(showResult, 1500);
+      }
+    })();
+  }
+</script>
+
+</body>
+</html>
