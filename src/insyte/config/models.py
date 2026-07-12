@@ -134,6 +134,9 @@ class AISection(_StrictModel):
     # Which local AI CLI powers Studio/TUI free-form questions: auto | claude | codex | off.
     # 'auto' uses whichever of claude/codex is installed; 'off' keeps the deterministic parser.
     studio_backend: str = "auto"
+    # Global kill-switch for opt-in detailed reports (aggregated results sent to the local AI
+    # CLI for analyst commentary). The per-request toggle can only narrow this, never widen it.
+    detailed_reports: bool = True
 
 
 class InsyteConfig(_StrictModel):

@@ -353,3 +353,68 @@ def test_free_form_forecast_projects_year(
     assert any("projected" in m["label"].lower() for m in result["metrics"])
     assert result["limitations"]  # carries the "estimate, not a guarantee" caveat
     services.dispose()
+
+
+def test_detailed_report_attaches(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    """With a backend available and the toggle on, an analyst report attaches to the result."""
+
+    from insyte.nl import llm
+    from insyte.nl.llm import Backend
+    from insyte.studio import events
+    from insyte.studio.schemas import DetailedReport
+
+    monkeypatch.setattr(events, "available_backends", lambda _pref: [Backend("codex", ["codex"])])
+    monkeypatch.setattr(
+        llm,
+        "resolve_report",
+        lambda payload, backend, **_k: DetailedReport(
+            executive_summary="Failures are concentrated on one gateway.",
+            generated_by=backend.name,
+        ),
+    )
+
+    conv = client.post("/api/conversations", json={}).json()
+    posted = client.post(
+        f"/api/conversations/{conv['id']}/messages",
+        json={"content": "payment failure rate", "detailed": True},
+    ).json()
+    text = client.get(posted["stream_url"]).text
+
+    assert "event: report_generating" in text
+    assert "event: report_ready" in text
+    result = _final_result(text)
+    assert result["report"]["generated_by"] == "codex"
+    assert result["report"]["executive_summary"].startswith("Failures are concentrated")
+
+
+def test_detailed_report_skipped_without_backend(client: TestClient) -> None:
+    """No claude/codex installed → the analysis still completes, report is skipped, not fatal."""
+
+    # The autouse _no_real_llm fixture sets INSYTE_STUDIO_LLM=off, so no backend is available.
+    conv = client.post("/api/conversations", json={}).json()
+    posted = client.post(
+        f"/api/conversations/{conv['id']}/messages",
+        json={"content": "payment failure rate", "detailed": True},
+    ).json()
+    text = client.get(posted["stream_url"]).text
+
+    assert "event: report_skipped" in text
+    result = _final_result(text)
+    assert result["status"] == "completed"  # base analysis unaffected
+    assert result["report"] is None
+    assert any("no local AI CLI" in w for w in result["warnings"])
+
+
+def test_detailed_report_off_by_default(client: TestClient) -> None:
+    """Without the toggle, no report machinery runs at all."""
+
+    conv = client.post("/api/conversations", json={}).json()
+    posted = client.post(
+        f"/api/conversations/{conv['id']}/messages",
+        json={"content": "payment failure rate"},
+    ).json()
+    text = client.get(posted["stream_url"]).text
+
+    assert "event: report_generating" not in text
+    assert "event: report_skipped" not in text
+    assert _final_result(text)["report"] is None

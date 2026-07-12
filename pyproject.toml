@@ -1,11 +1,12 @@
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
 name = "insyte"
-version = "0.1.0"
-description = "Local-first AI analytics over your database, safely."
+version = "0.2.0"
+description = "Local-first AI analytics for PostgreSQL — natural-language questions, validated read-only SQL, credentials never exposed to the model."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { file = "LICENSE" }

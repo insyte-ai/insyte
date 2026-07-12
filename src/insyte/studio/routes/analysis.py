@@ -78,6 +78,7 @@ def analysis_events(
         analysis_factory=analysis_factory,
         on_complete=on_complete,
         history=history,
+        detailed=bool(job.get("detailed", False)),
     )
     return StreamingResponse(stream, media_type="text/event-stream")
 

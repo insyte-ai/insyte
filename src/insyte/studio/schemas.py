@@ -28,6 +28,7 @@ class MessageRequest(BaseModel):
     content: str
     active_metric: str | None = None
     active_data_chain: str | None = None
+    detailed: bool = False  # opt-in: generate an AI analyst report over the result
 
 
 # --------------------------------------------------------------------------------------------
@@ -82,6 +83,80 @@ class DataFreshness(BaseModel):
     last_scan: datetime | None = None
 
 
+# --------------------------------------------------------------------------------------------
+# Detailed report (opt-in): AI-written analyst commentary over the already-computed result.
+# The model supplies prose only; every number and chart is produced deterministically by Insyte.
+# Fields mirror src/insyte/nl/report_skill.md. All optional so a partial model reply still
+# validates and degrades gracefully.
+# --------------------------------------------------------------------------------------------
+
+
+class KeyInsight(BaseModel):
+    title: str = ""
+    detail: str = ""
+    evidence: str = ""
+    confidence: str = "medium"  # high | medium | low
+    limitations: str = ""
+    alternative_explanation: str = ""
+
+
+class DataQualityFlag(BaseModel):
+    issue: str = ""
+    severity: str = "info"  # info | warning | critical
+    affected: str = ""
+    impact: str = ""
+
+
+class RootCause(BaseModel):
+    what_changed: str = ""
+    when: str = ""
+    dimension: str = ""
+    likely_cause: str = ""
+    confidence: str = "medium"
+    evidence: str = ""
+
+
+class BusinessImpact(BaseModel):
+    narrative: str = ""
+    financial_note: str = ""
+
+
+class ReportForecast(BaseModel):
+    expected: str = ""
+    best_case: str = ""
+    worst_case: str = ""
+    assumptions: str = ""
+    method: str = ""
+
+
+class RiskItem(BaseModel):
+    risk: str = ""
+    likelihood: str = "medium"
+    mitigation: str = ""
+
+
+class Recommendation(BaseModel):
+    action: str = ""
+    horizon: str = "short"  # immediate | short | long
+    priority: str = "medium"  # high | medium | low
+    expected_impact: str = ""
+    est_roi: str = ""
+
+
+class DetailedReport(BaseModel):
+    executive_summary: str = ""
+    key_insights: list[KeyInsight] = Field(default_factory=list)
+    data_quality: list[DataQualityFlag] = Field(default_factory=list)
+    root_cause: RootCause | None = None
+    business_impact: BusinessImpact | None = None
+    forecast: ReportForecast | None = None
+    risks: list[RiskItem] = Field(default_factory=list)
+    recommendations: list[Recommendation] = Field(default_factory=list)
+    caveats: list[str] = Field(default_factory=list)
+    confidence_overall: str = "medium"
+    generated_by: str = ""  # backend name, e.g. "codex"
+
+
 class AnalysisResult(BaseModel):
     analysis_id: str
     status: str = "completed"  # completed | blocked | error | unrecognized
@@ -98,6 +173,7 @@ class AnalysisResult(BaseModel):
     warnings: list[str] = Field(default_factory=list)
     suggested_questions: list[str] = Field(default_factory=list)
     freshness: DataFreshness | None = None
+    report: DetailedReport | None = None
 
 
 # --------------------------------------------------------------------------------------------

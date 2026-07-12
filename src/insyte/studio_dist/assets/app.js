@@ -8,7 +8,17 @@
   "use strict";
 
   const API = "/api";
-  const state = { status: null, metrics: null, conversations: [], conversationId: null };
+  const state = {
+    status: null,
+    metrics: null,
+    conversations: [],
+    conversationId: null,
+    detailed: localStorage.getItem("insyte-detailed") === "1",
+    busy: false,
+    activeStream: null,
+    activeLoader: null,
+    activeAnalysisId: null,
+  };
 
   // ---- helpers ---------------------------------------------------------------------------
   function el(tag, attrs, ...children) {
@@ -183,19 +193,44 @@
       el("p", {}, "Ask anything about your " + project + " data.")
     );
     const log = el("div", { id: "chat-log" });
-    const input = el("input", { id: "composer-input", placeholder: "Ask an analytics question…", autocomplete: "off" });
-    input.addEventListener("keydown", (e) => { if (e.key === "Enter") submitQuestion(input.value); });
-    const composer = el("div", { class: "composer" },
-      input,
-      el("button", { onClick: () => submitQuestion(input.value) }, "Ask")
+    const input = el("input", { id: "composer-input", class: "composer-input", placeholder: "Ask an analytics question…", autocomplete: "off" });
+    input.addEventListener("keydown", (e) => { if (e.key === "Enter" && !state.busy) submitQuestion(input.value); });
+    const plus = el("button", {
+      class: "composer-plus" + (state.detailed ? " active" : ""), id: "composer-plus",
+      title: "Options", onClick: togglePlusMenu,
+    }, "+");
+    const menu = el("div", { class: "plus-menu hidden", id: "plus-menu" },
+      el("button", { class: "plus-item" + (state.detailed ? " on" : ""), id: "plus-detailed", onClick: selectDetailed },
+        el("span", { class: "pi-check" }, state.detailed ? "✓" : ""),
+        el("span", { class: "pi-body" },
+          el("span", { class: "pi-title" }, "Detailed report"),
+          el("span", { class: "pi-sub" }, "In-depth analyst write-up with charts")
+        )
+      )
     );
+    // The active tool shows as a removable chip inside the input pill (like ChatGPT).
+    const chip = el("span", { class: "tool-chip" + (state.detailed ? "" : " hidden"), id: "detailed-chip" },
+      el("span", { class: "tc-ico" }, "◍"),
+      "Detailed report",
+      el("button", { class: "tc-x", title: "Remove", onClick: (e) => { e.stopPropagation(); setDetailed(false); } }, "✕")
+    );
+    const field = el("div", { class: "composer-field" },
+      el("div", { class: "composer-plus-wrap" }, plus, menu),
+      chip,
+      input
+    );
+    const composer = el("div", { class: "composer" },
+      field,
+      el("button", { class: "composer-send", id: "composer-send", title: "Ask", onClick: onSendClick }, sendIcon())
+    );
+    const composerWrap = el("div", { class: "composer-wrap" }, composer);
     const samples = el("div", { class: "suggestions", id: "chat-samples" },
       ...suggestions().slice(0, 4).map((q) => el("button", { class: "suggestion", onClick: () => submitQuestion(q) }, q))
     );
 
     // Empty state (heading + composer + samples, centered). Once there are messages the
     // container loses .empty: the log fills the space and the composer sticks to the bottom.
-    const chat = el("div", { class: "chat empty", id: "chat" }, hero, log, composer, samples);
+    const chat = el("div", { class: "chat empty", id: "chat" }, hero, log, composerWrap, samples);
     view.append(chat);
     if (state.conversationId) loadMessages(state.conversationId, log);
     else setTimeout(() => input.focus(), 0);
@@ -244,7 +279,51 @@
     });
   }
 
+  // ---- send / stop control ---------------------------------------------------------------
+  function iconSvg(inner) {
+    const svg = svgNode("svg", {
+      viewBox: "0 0 24 24", width: 19, height: 19, fill: "none", stroke: "currentColor",
+      "stroke-width": 2.2, "stroke-linecap": "round", "stroke-linejoin": "round",
+    });
+    svg.innerHTML = inner;
+    return svg;
+  }
+  function sendIcon() { return iconSvg('<path d="M12 20V5"/><path d="M5 12l7-7 7 7"/>'); }
+  function stopIcon() { return iconSvg('<rect x="6.5" y="6.5" width="11" height="11" rx="2.5" fill="currentColor" stroke="none"/>'); }
+
+  function onSendClick() {
+    if (state.busy) stopAnalysis();
+    else submitQuestion(($("#composer-input") || {}).value);
+  }
+  function setComposerBusy(busy) {
+    state.busy = busy;
+    const btn = $("#composer-send");
+    if (!btn) return;
+    btn.classList.toggle("busy", busy);
+    btn.title = busy ? "Stop" : "Ask";
+    btn.innerHTML = "";
+    btn.appendChild(busy ? stopIcon() : sendIcon());
+  }
+  function finishStream() {
+    if (state.activeStream) { try { state.activeStream.close(); } catch (e) {} }
+    state.activeStream = null;
+    state.activeLoader = null;
+    state.activeAnalysisId = null;
+    setComposerBusy(false);
+  }
+  function stopAnalysis() {
+    const loader = state.activeLoader, aid = state.activeAnalysisId;
+    finishStream();
+    if (loader && loader.parentNode) {
+      loader.classList.remove("loader");
+      loader.innerHTML = "";
+      loader.appendChild(el("div", { class: "muted" }, "Stopped."));
+    }
+    if (aid) postJSON("/analyses/" + aid + "/cancel", {}).catch(() => {});
+  }
+
   function submitQuestion(text) {
+    if (state.busy) return;
     text = (text || "").trim();
     if (!text) return;
     setChatActive();
@@ -254,9 +333,62 @@
     if (input) input.value = "";
 
     ensureConversation()
-      .then((cid) => postJSON("/conversations/" + cid + "/messages", { content: text }))
+      .then((cid) => postJSON("/conversations/" + cid + "/messages", { content: text, detailed: !!state.detailed }))
       .then((job) => streamAnalysis(log, job))
       .catch(showError);
+  }
+
+  function togglePlusMenu(e) {
+    if (e) e.stopPropagation();
+    const menu = $("#plus-menu");
+    if (!menu) return;
+    const willOpen = menu.classList.contains("hidden");
+    menu.classList.toggle("hidden");
+    if (willOpen) setTimeout(() => document.addEventListener("click", closePlusMenuOnce), 0);
+  }
+  function closePlusMenuOnce(e) {
+    const menu = $("#plus-menu"), plus = $("#composer-plus");
+    if (menu && !menu.contains(e.target) && e.target !== plus) {
+      menu.classList.add("hidden");
+      document.removeEventListener("click", closePlusMenuOnce);
+    }
+  }
+  function setDetailed(on) {
+    state.detailed = on;
+    localStorage.setItem("insyte-detailed", on ? "1" : "0");
+    const item = $("#plus-detailed");
+    if (item) {
+      item.classList.toggle("on", on);
+      const chk = item.querySelector(".pi-check");
+      if (chk) chk.textContent = on ? "✓" : "";
+    }
+    const plus = $("#composer-plus");
+    if (plus) plus.classList.toggle("active", on);
+    const chip = $("#detailed-chip");
+    if (chip) chip.classList.toggle("hidden", !on);
+    if (on) maybeShowReportNotice();
+  }
+  function selectDetailed() {
+    setDetailed(!state.detailed);
+    const menu = $("#plus-menu");
+    if (menu) menu.classList.add("hidden");
+    document.removeEventListener("click", closePlusMenuOnce);
+  }
+
+  // Shown once, the first time a user turns detailed reports on: what leaves the machine.
+  function maybeShowReportNotice() {
+    if (localStorage.getItem("insyte-report-notice") === "1") return;
+    const notice = el("div", { class: "report-notice" },
+      el("div", { class: "rn-body" },
+        el("strong", {}, "Detailed reports use your AI CLI. "),
+        "They send your aggregated results — not raw rows or credentials — to your local codex/claude to write analyst commentary. Turn it off anytime."
+      ),
+      el("button", { class: "rn-dismiss", onClick: (e) => {
+        localStorage.setItem("insyte-report-notice", "1");
+        e.target.closest(".report-notice").remove();
+      } }, "Got it")
+    );
+    document.body.appendChild(notice);
   }
 
   function appendUser(log, text) {
@@ -285,19 +417,33 @@
     loader.scrollIntoView({ behavior: "smooth", block: "end" });
 
     const source = new EventSource(job.stream_url);
+    state.activeStream = source;
+    state.activeLoader = loader;
+    state.activeAnalysisId = job.analysis_id;
+    setComposerBusy(true);
+
     Object.keys(PHASES).forEach((ev) =>
       source.addEventListener(ev, () => { text.textContent = PHASES[ev] + "…"; })
     );
     source.addEventListener("query_blocked", () => {});
+    source.addEventListener("report_generating", () => { text.textContent = "Writing your detailed report…"; });
+    source.addEventListener("report_skipped", () => {});
+    source.addEventListener("report_failed", () => {});
     source.addEventListener("response_completed", (e) => {
-      source.close();
+      finishStream();
       loader.remove();
       const result = JSON.parse(e.data).result;
       log.append(renderResult(result));
       log.lastChild.scrollIntoView({ behavior: "smooth", block: "end" });
       refreshConversations();
     });
-    source.onerror = () => { source.close(); };
+    source.onerror = () => {
+      // Fires on our own close too; only act if this stream is still the active one.
+      if (state.activeStream !== source) return;
+      finishStream();
+      text.textContent = "Connection lost.";
+      loader.classList.remove("loader");
+    };
   }
 
   // ---- result card -----------------------------------------------------------------------
@@ -334,8 +480,15 @@
     if (r.limitations && r.limitations.length) {
       card.append(el("div", { class: "tab-body" }, el("div", { class: "warn-box" }, r.limitations.join("; "))));
     }
-    if (showMetrics && r.metrics && r.metrics.length) {
+    if (!r.report && showMetrics && r.metrics && r.metrics.length) {
       card.append(el("div", { class: "metric-row" }, ...r.metrics.map(metricCard)));
+    }
+
+    // A detailed report replaces the basic tab strip with the full analyst dashboard.
+    if (r.report) {
+      card.append(renderReport(r));
+      if (r.suggested_questions && r.suggested_questions.length) card.append(followups(r.suggested_questions));
+      return card;
     }
 
     if (!rich) {
@@ -433,6 +586,185 @@
   function followups(questions) {
     return el("div", { class: "followups" },
       ...questions.map((q) => el("button", { class: "followup", onClick: () => submitQuestion(q) }, q))
+    );
+  }
+
+  // ---- detailed report dashboard ---------------------------------------------------------
+  function reportSection(title) {
+    return el("div", { class: "report-section" }, title);
+  }
+
+  function renderReport(r) {
+    const rep = r.report;
+    const wrap = el("div", { class: "report" });
+    wrap.append(el("div", { class: "report-head" },
+      el("span", { class: "report-title" }, "◍ Detailed report"),
+      el("span", { class: "conf-chip " + (rep.confidence_overall || "medium") }, (rep.confidence_overall || "medium") + " confidence")
+    ));
+    if (rep.executive_summary) wrap.append(el("div", { class: "exec" }, rep.executive_summary));
+    if (r.metrics && r.metrics.length) wrap.append(el("div", { class: "metric-row" }, ...r.metrics.map(metricCard)));
+
+    const charts = reportCharts(r);
+    if (charts.length) wrap.append(el("div", { class: "chart-grid" }, ...charts));
+
+    if (rep.key_insights && rep.key_insights.length) {
+      wrap.append(reportSection("Key insights"));
+      wrap.append(el("div", { class: "insights" }, ...rep.key_insights.map(insightCard)));
+    }
+    if (rep.data_quality && rep.data_quality.length) {
+      wrap.append(reportSection("Data quality"));
+      wrap.append(el("div", { class: "dq-strip" }, ...rep.data_quality.map(dqChip)));
+    }
+    const rc = rep.root_cause;
+    if (rc && (rc.likely_cause || rc.what_changed)) {
+      wrap.append(reportSection("Root cause"));
+      wrap.append(rootCauseBox(rc));
+    }
+    const bi = rep.business_impact;
+    if (bi && (bi.narrative || bi.financial_note)) {
+      wrap.append(reportSection("Business impact"));
+      wrap.append(el("div", { class: "impact" },
+        bi.narrative ? el("div", {}, bi.narrative) : null,
+        bi.financial_note ? el("div", { class: "impact-fin" }, bi.financial_note) : null
+      ));
+    }
+    const fc = rep.forecast;
+    if (fc && (fc.expected || fc.best_case || fc.worst_case)) {
+      wrap.append(reportSection("Forecast"));
+      wrap.append(forecastPanel(fc));
+    }
+    if (rep.risks && rep.risks.length) {
+      wrap.append(reportSection("Risks"));
+      wrap.append(el("div", { class: "risks" }, ...rep.risks.map(riskRow)));
+    }
+    if (rep.recommendations && rep.recommendations.length) {
+      wrap.append(reportSection("Recommendations"));
+      wrap.append(el("div", { class: "recs" }, ...rep.recommendations.map(recCard)));
+    }
+    if (rep.caveats && rep.caveats.length) {
+      wrap.append(el("details", { class: "caveats" },
+        el("summary", {}, "Caveats & limitations"),
+        el("ul", {}, ...rep.caveats.map((c) => el("li", {}, c)))
+      ));
+    }
+    wrap.append(el("div", { class: "report-foot" },
+      "Generated by " + (rep.generated_by || "your AI CLI") + " · commentary over Insyte-computed figures"));
+    return wrap;
+  }
+
+  // Charts are derived only from the real result — never from anything the model returned.
+  function reportCharts(r) {
+    const cards = [];
+    if (r.charts && r.charts.length) {
+      cards.push(chartCard(r.charts[0].title || "Overview", chartTab(r.charts[0])));
+    }
+    if (r.contributors && r.contributors.length > 1) {
+      cards.push(chartCard("Contribution share", shareChart(r.contributors)));
+    }
+    const spec = r.charts && r.charts[0];
+    if (spec && spec.type === "line" && spec.series && spec.series[0]) {
+      const key = spec.series[0].key;
+      const labels = (spec.data || []).map((d) => String(d[spec.x_key]));
+      const values = (spec.data || []).map((d) => Number(d[key]) || 0);
+      if (values.length > 1) cards.push(chartCard("Period-over-period growth", growthBars(labels, values)));
+    }
+    return cards;
+  }
+
+  function chartCard(title, body) {
+    return el("div", { class: "chart-card" }, el("div", { class: "cc-title" }, title), body);
+  }
+
+  function shareChart(contributors) {
+    return el("div", { class: "share" },
+      ...contributors.slice(0, 8).map((c) => {
+        const pct = c.contribution_percent != null ? c.contribution_percent : 0;
+        return el("div", { class: "share-row" },
+          el("div", { class: "share-label", title: c.label }, c.label),
+          el("div", { class: "share-track" }, el("div", { class: "share-fill", style: "width:" + Math.max(2, Math.min(100, pct)) + "%" })),
+          el("div", { class: "share-pct" }, pct.toFixed(0) + "%")
+        );
+      })
+    );
+  }
+
+  function growthBars(labels, values) {
+    const rows = [];
+    for (let i = 1; i < values.length; i++) {
+      const prev = values[i - 1];
+      const pct = prev ? ((values[i] - prev) / prev) * 100 : 0;
+      const dir = pct >= 0 ? "up" : "down";
+      rows.push(el("div", { class: "g-row" },
+        el("div", { class: "g-label", title: labels[i] }, labels[i]),
+        el("div", { class: "g-track" }, el("div", { class: "g-fill " + dir, style: "width:" + Math.max(3, Math.min(100, Math.abs(pct))) + "%" })),
+        el("div", { class: "g-pct " + dir }, (pct >= 0 ? "+" : "") + pct.toFixed(0) + "%")
+      ));
+    }
+    return el("div", { class: "growth" }, ...rows);
+  }
+
+  function insightCard(ins) {
+    return el("details", { class: "insight" },
+      el("summary", {},
+        el("span", { class: "ins-title" }, ins.title || "Insight"),
+        el("span", { class: "conf-chip " + (ins.confidence || "medium") }, ins.confidence || "")
+      ),
+      ins.detail ? el("div", { class: "ins-detail" }, ins.detail) : null,
+      ins.evidence ? el("div", { class: "ins-line" }, el("b", {}, "Evidence: "), ins.evidence) : null,
+      ins.limitations ? el("div", { class: "ins-line" }, el("b", {}, "Caveat: "), ins.limitations) : null,
+      ins.alternative_explanation ? el("div", { class: "ins-line" }, el("b", {}, "Alternative: "), ins.alternative_explanation) : null
+    );
+  }
+
+  function dqChip(f) {
+    return el("div", { class: "dq " + (f.severity || "info"), title: f.impact || "" },
+      el("span", { class: "dq-dot" }),
+      f.issue + (f.affected ? " · " + f.affected : "")
+    );
+  }
+
+  function rootCauseBox(rc) {
+    const meta = [];
+    if (rc.what_changed) meta.push(el("span", {}, "Changed: " + rc.what_changed));
+    if (rc.when) meta.push(el("span", {}, "When: " + rc.when));
+    if (rc.dimension) meta.push(el("span", {}, "Along: " + rc.dimension));
+    if (rc.confidence) meta.push(el("span", { class: "conf-chip " + rc.confidence }, rc.confidence));
+    return el("div", { class: "rootcause" },
+      rc.likely_cause ? el("div", { class: "rc-main" }, rc.likely_cause) : null,
+      meta.length ? el("div", { class: "rc-meta" }, ...meta) : null,
+      rc.evidence ? el("div", { class: "rc-ev" }, el("b", {}, "Evidence: "), rc.evidence) : null
+    );
+  }
+
+  function forecastPanel(fc) {
+    const card = (label, val, cls) => el("div", { class: "fc " + cls },
+      el("div", { class: "fc-label" }, label), el("div", { class: "fc-val" }, val || "—"));
+    return el("div", { class: "forecast" },
+      el("div", { class: "fc-cards" },
+        card("Worst case", fc.worst_case, "down"),
+        card("Expected", fc.expected, "mid"),
+        card("Best case", fc.best_case, "up")
+      ),
+      fc.assumptions ? el("div", { class: "fc-note" }, fc.assumptions) : null
+    );
+  }
+
+  function riskRow(rk) {
+    return el("div", { class: "risk" },
+      el("span", { class: "risk-like " + (rk.likelihood || "medium") }, rk.likelihood || "—"),
+      el("span", { class: "risk-text" }, rk.risk + (rk.mitigation ? " — " + rk.mitigation : ""))
+    );
+  }
+
+  function recCard(rc) {
+    const meta = [rc.expected_impact, rc.est_roi ? "ROI: " + rc.est_roi : null].filter(Boolean).join(" · ");
+    return el("div", { class: "rec " + (rc.priority || "medium") },
+      el("div", { class: "rec-head" },
+        el("span", { class: "rec-horizon" }, rc.horizon || "short"),
+        el("span", { class: "rec-prio " + (rc.priority || "medium") }, (rc.priority || "medium") + " priority")
+      ),
+      el("div", { class: "rec-action" }, rc.action),
+      meta ? el("div", { class: "rec-meta" }, meta) : null
     );
   }
 

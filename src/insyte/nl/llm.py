@@ -21,12 +21,16 @@ import subprocess
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import TypeVar
+from importlib import resources
+from typing import TYPE_CHECKING, TypeVar
 
 from insyte.analytics.models import TimeGrain
 from insyte.nl.periods import RELATIVE_PERIODS
 from insyte.semantic.models import SemanticLayer
 from insyte.tui.intent import AnalysisMode
+
+if TYPE_CHECKING:
+    from insyte.studio.schemas import DetailedReport
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +46,8 @@ _DEFAULT_ARGS: dict[str, list[str]] = {
 }
 
 _TIMEOUT_SECONDS = float(os.environ.get("INSYTE_STUDIO_LLM_TIMEOUT", "90"))
+# Detailed reports are a larger generation than a one-line intent, so they get a longer budget.
+_REPORT_TIMEOUT_SECONDS = float(os.environ.get("INSYTE_STUDIO_REPORT_TIMEOUT", "180"))
 
 
 @dataclass
@@ -281,24 +287,123 @@ def resolve(
     """Run the local AI CLI to translate ``question``; return ``None`` on any failure."""
 
     prompt = build_prompt(question, layer, now=now, history=history)
+    out = _run(backend, prompt, timeout or _TIMEOUT_SECONDS)
+    if out is None:
+        return None
+    data = _extract_json(out)
+    if data is None:
+        logger.warning("nl_resolve_no_json", extra={"backend": backend.name})
+        return None
+    return _validate(data, layer)
+
+
+# --------------------------------------------------------------------------------------------
+# Detailed report (opt-in): the model writes analyst prose over an already-computed, grounded
+# payload (see insyte.analytics.report). It never sees raw rows or credentials, and emits no SQL
+# or chart data — only the JSON report described by report_skill.md.
+# --------------------------------------------------------------------------------------------
+
+_persona_cache: str | None = None
+
+_REPORT_LIST_KEYS = frozenset(
+    {"key_insights", "data_quality", "risks", "recommendations", "caveats"}
+)
+_REPORT_OBJECT_KEYS = frozenset({"root_cause", "business_impact", "forecast"})
+
+
+def _persona() -> str:
+    """Load and cache the analyst persona bundled alongside this module."""
+
+    global _persona_cache
+    if _persona_cache is None:
+        _persona_cache = (
+            resources.files("insyte.nl").joinpath("report_skill.md").read_text(encoding="utf-8")
+        )
+    return _persona_cache
+
+
+def build_report_prompt(payload: dict) -> str:
+    """Wrap the analyst persona around the grounded JSON payload."""
+
+    data = json.dumps(payload, ensure_ascii=False, indent=2)
+    return (
+        f"{_persona()}\n\n"
+        "## Analysis payload (JSON)\n\n"
+        "Everything you may reason about is below. Use only these figures — do not invent any.\n\n"
+        f"{data}\n\n"
+        "Return ONLY the JSON report object described above — no prose, no code fences."
+    )
+
+
+def resolve_report(
+    payload: dict, backend: Backend, *, timeout: float | None = None
+) -> DetailedReport | None:
+    """Ask the local AI CLI to write a detailed report over ``payload``. ``None`` on any failure."""
+
+    prompt = build_report_prompt(payload)
+    out = _run(backend, prompt, timeout or _REPORT_TIMEOUT_SECONDS)
+    if out is None:
+        return None
+    data = _extract_report_json(out)
+    if data is None:
+        logger.warning("nl_report_no_json", extra={"backend": backend.name})
+        return None
+    return _validate_report(data, backend.name)
+
+
+def _extract_report_json(text: str) -> dict | None:
+    """Pick the report object from CLI output (prefer one carrying report keys; else the last)."""
+
+    objects = _all_json_objects(text)
+    if not objects:
+        return None
+    for obj in reversed(objects):
+        if "executive_summary" in obj or "key_insights" in obj:
+            return obj
+    return objects[-1]
+
+
+def _validate_report(data: dict, backend_name: str) -> DetailedReport | None:
+    """Coerce raw model JSON into a :class:`DetailedReport`, or ``None`` if unusable."""
+
+    from pydantic import ValidationError  # local: keep nl.llm import-light
+
+    from insyte.studio.schemas import DetailedReport
+
+    cleaned: dict = {}
+    for key, value in data.items():
+        if key in _REPORT_LIST_KEYS and not isinstance(value, list):
+            continue
+        if key in _REPORT_OBJECT_KEYS and not isinstance(value, dict):
+            continue
+        cleaned[key] = value
+
+    try:
+        report = DetailedReport.model_validate(cleaned)
+    except ValidationError:
+        logger.warning("nl_report_invalid", extra={"backend": backend_name})
+        return None
+    report.generated_by = backend_name
+    # An empty shell (no summary, no insights) is not worth showing — let the result stand alone.
+    if not report.executive_summary.strip() and not report.key_insights:
+        return None
+    return report
+
+
+def _run(backend: Backend, prompt: str, timeout: float) -> str | None:
+    """Invoke the local AI CLI once; return its stdout, or ``None`` on spawn/timeout failure."""
+
     try:
         proc = subprocess.run(  # noqa: S603 - trusted local CLI, no shell
             [*backend.argv, prompt],
             capture_output=True,
             text=True,
-            timeout=timeout or _TIMEOUT_SECONDS,
+            timeout=timeout,
         )
     except subprocess.TimeoutExpired:
-        logger.warning("nl_resolve_timeout", extra={"backend": backend.name})
+        logger.warning("nl_run_timeout", extra={"backend": backend.name})
         return None
     except OSError as exc:
-        logger.warning(
-            "nl_resolve_spawn_failed", extra={"backend": backend.name, "error": str(exc)}
-        )
+        logger.warning("nl_run_spawn_failed", extra={"backend": backend.name, "error": str(exc)})
         return None
-
-    data = _extract_json(proc.stdout or "")
-    if data is None:
-        logger.warning("nl_resolve_no_json", extra={"backend": backend.name})
-        return None
-    return _validate(data, layer)
+    return proc.stdout or ""

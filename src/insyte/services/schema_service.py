@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 from insyte.metadata.models import (
+    ColumnProfile,
     RelationshipInfo,
     ScanSummary,
     TableDetail,
@@ -57,6 +58,13 @@ class SchemaService:
 
     def list_relationships(self) -> list[RelationshipInfo]:
         return self._metadata.list_relationships()
+
+    def column_profiles(self) -> list[ColumnProfile]:
+        """Stored column profiles from ``insyte profile`` (empty if the project isn't profiled)."""
+
+        if not self._metadata.has_profiles():
+            return []
+        return self._metadata.list_column_profiles()
 
     def database_summary(self) -> DatabaseSummary:
         if not self._metadata.has_metadata():

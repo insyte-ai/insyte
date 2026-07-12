@@ -19,6 +19,25 @@ core feature, not an afterthought.
 - **Redacted, structured logs.** All logging passes through a redaction filter that masks
   connection URLs and sensitive fields (passwords, tokens, API keys).
 
+## Detailed reports (opt-in)
+
+Insyte's default posture is that **AI models see only metric and dimension names, never your
+data**. The optional **Detailed report** feature is the single, explicit exception, and it is
+deliberately narrow:
+
+- **Opt-in only.** Off by default; enabled per question via the Studio toggle, and globally
+  gated by `ai.detailed_reports` in `config.yaml` (set it to `false` to disable entirely).
+- **Aggregated results only.** What is sent is the already-computed, validated, PII-masked,
+  row-limited *result* (e.g. a metric total, a breakdown by dimension, a monthly trend — capped
+  at 200 rows) plus Insyte-computed metadata (data-quality flags, forecast bands). **Raw table
+  rows, connection strings, and credentials are never sent.**
+- **The AI only writes prose.** It receives numbers and returns commentary. It does not author
+  SQL, choose what is queried, or produce any chart — every figure and chart in the report is
+  computed deterministically by Insyte.
+- **It leaves your machine.** The payload goes to your local `claude`/`codex` CLI, which sends
+  it to that provider (Anthropic / OpenAI) under your own account. A one-time notice makes this
+  explicit before the first report is generated.
+
 ## Recommendations for operators
 
 - Create a dedicated read-only role, e.g.:

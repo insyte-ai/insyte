@@ -1,6 +1,6 @@
 # Insyte
 
-**Ask your database questions in plain English — locally, and safely.**
+**Ask your database questions in natural language — locally, and safely.**
 
 Insyte connects to your database with **read-only** credentials and turns natural-language
 questions into safe analytics. Ask *"what were total sales last month?"* or *"revenue by
@@ -15,14 +15,28 @@ Two things are always true:
 
 ## What you can do
 
-- **Ask in plain English** — "total order value last month", "orders by payment method",
+- **Ask in natural language** — "total order value last month", "orders by payment method",
   "monthly revenue trend", "what's the expected revenue this year?"
 - **Three ways to use it** — a browser workspace (`insyte studio`), a terminal UI
   (`insyte chat`), or directly from **Claude Code / Codex** over MCP.
 - **Trends, breakdowns, comparisons, and forecasts** over metrics Insyte generates from your
   schema — with charts, tables, and the exact SQL on demand.
+- **Detailed reports (opt-in)** — flip on "Detailed report" in Studio for an in-depth analyst
+  write-up: executive summary, key insights, data-quality flags, root-cause reasoning,
+  best/expected/worst forecast, and prioritized recommendations, in a visual dashboard. See the
+  privacy note below for what this shares.
 - **Read-only and private** — everything runs on your machine against your database; the raw
   connection URL never leaves your computer.
+
+### Detailed reports & your privacy
+
+Everything above keeps your data on your machine. The one **opt-in** exception is the
+**Detailed report**: to write analyst commentary, Insyte sends the *already-aggregated,
+PII-masked result* of your query (e.g. totals by city — never raw rows, never credentials) to
+your local `claude`/`codex` CLI, which forwards it to that provider. The AI only writes prose —
+it never sees credentials, never authors SQL, and every chart is built by Insyte from real
+numbers. It's off by default, shows a one-time notice the first time you enable it, and can be
+turned off entirely with `ai.detailed_reports: false` in `config.yaml`.
 
 ## Install & set up
 
@@ -110,3 +124,4 @@ uv run ruff check src tests && uv run mypy src && uv run pytest -q
 
 See [SECURITY.md](SECURITY.md) for the read-only posture and how to report a vulnerability.
 Licensed under **Apache-2.0** — see [LICENSE](LICENSE).
+

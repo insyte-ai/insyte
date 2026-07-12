@@ -80,7 +80,11 @@ def post_message(
     # Name the conversation after its first question (before adding the message).
     services.conversations.autotitle_from_question(conversation_id, body.content)
     services.conversations.add_message(conversation_id, "user", body.content)
-    pending[analysis_id] = {"question": body.content, "conversation_id": conversation_id}
+    pending[analysis_id] = {
+        "question": body.content,
+        "conversation_id": conversation_id,
+        "detailed": body.detailed,
+    }
     return {
         "analysis_id": analysis_id,
         "stream_url": f"/api/analyses/{analysis_id}/events",

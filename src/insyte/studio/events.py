@@ -10,18 +10,20 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable, Iterator
+from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from insyte.analytics.charts import format_value
 from insyte.analytics.forecast import project_current_year
-from insyte.analytics.models import Period, TimeGrain
+from insyte.analytics.models import AnalysisKind, Period, TimeGrain
+from insyte.analytics.models import AnalysisResult as DomainAnalysisResult
 from insyte.analytics.periods import periods_for_grain
 from insyte.config.models import AnalyticsMode, InsyteConfig
 from insyte.connectors.base import DatabaseConnector
 from insyte.exceptions import InsyteError, QueryValidationError
 from insyte.nl.llm import available_backends, resolve
 from insyte.nl.periods import period_from_token
-from insyte.semantic.models import MetricFormat, SemanticLayer
+from insyte.semantic.models import Metric, MetricFormat, SemanticLayer
 from insyte.services.analysis_service import AnalysisService
 from insyte.services.schema_service import SchemaService
 from insyte.studio.schemas import (
@@ -63,6 +65,7 @@ def stream_analysis(
     analysis_factory: AnalysisFactory,
     on_complete: Callable[[AnalysisResult], None],
     history: list[tuple[str, str]] | None = None,
+    detailed: bool = False,
 ) -> Iterator[str]:
     """Yield SSE strings for an analysis and persist the final result via ``on_complete``."""
 
@@ -126,7 +129,9 @@ def stream_analysis(
         yield sse("sql_validated", {})
         yield sse("query_started", {})
         try:
-            result = _dispatch(analysis, intent, analysis_id, layer, data_freshness, period)
+            result, report_inputs = _dispatch(
+                analysis, intent, analysis_id, layer, data_freshness, period
+            )
         except QueryValidationError as exc:
             result = studio_result_blocked(analysis_id, exc.violations)
             on_complete(result)
@@ -140,13 +145,42 @@ def stream_analysis(
             on_complete(result)
             yield sse("response_completed", {"result": result.model_dump(mode="json")})
             return
+
+        # For a detailed report, fetch a supporting monthly trend while the connector is still
+        # open, so even a single-value answer gets a real chart and the AI can judge direction.
+        if (
+            detailed
+            and report_inputs is not None
+            and report_inputs.domain.kind is not AnalysisKind.timeseries
+            and intent.metric is not None
+        ):
+            report_inputs.trend = _supporting_trend(analysis, intent.metric)
     finally:
         connector.dispose()
 
     yield sse("query_completed", {"rows": result.query.rows_returned if result.query else 0})
     yield sse("chart_prepared", {"charts": len(result.charts)})
+
+    # Opt-in detailed report: analyst commentary over the completed, grounded result.
+    if detailed and result.status == "completed" and report_inputs is not None:
+        yield from _augment_with_report(
+            question, result, report_inputs, config, schema, data_freshness
+        )
+
     on_complete(result)
     yield sse("response_completed", {"result": result.model_dump(mode="json")})
+
+
+@dataclass
+class _ReportInputs:
+    """The domain-level pieces a detailed report needs, kept aside during dispatch."""
+
+    domain: DomainAnalysisResult
+    fmt: MetricFormat
+    metric: Metric | None
+    period_label: str | None
+    monthly: bool  # domain rows are month-grained → forecast bands are meaningful
+    trend: DomainAnalysisResult | None = None  # supporting monthly series for detailed reports
 
 
 def _dispatch(
@@ -156,26 +190,123 @@ def _dispatch(
     layer: SemanticLayer,
     data_freshness: DataFreshness,
     period: Period | None = None,
-) -> AnalysisResult:
+) -> tuple[AnalysisResult, _ReportInputs | None]:
     metric = intent.metric
     assert metric is not None
     fmt = layer.metrics[metric].format if metric in layer.metrics else MetricFormat.number
     suggested = _suggestions(layer)
+    metric_def = layer.metrics.get(metric)
+    period_label = period.label if period else None
+
+    def inputs(domain: DomainAnalysisResult, *, monthly: bool) -> _ReportInputs:
+        return _ReportInputs(domain, fmt, metric_def, period_label, monthly)
 
     if intent.mode is AnalysisMode.forecast:
-        return _forecast(analysis, metric, analysis_id, fmt, data_freshness, suggested)
+        result, domain = _forecast(analysis, metric, analysis_id, fmt, data_freshness, suggested)
+        return result, inputs(domain, monthly=True)
     if intent.mode is AnalysisMode.segment and intent.dimension:
         domain = analysis.segment(metric, intent.dimension, period)
-        return studio_result_from_analysis(analysis_id, domain, fmt, data_freshness, suggested)
+        result = studio_result_from_analysis(analysis_id, domain, fmt, data_freshness, suggested)
+        return result, inputs(domain, monthly=False)
     if intent.mode is AnalysisMode.timeseries and intent.grain:
         domain = analysis.timeseries(metric, intent.grain, period)
-        return studio_result_from_analysis(analysis_id, domain, fmt, data_freshness, suggested)
+        result = studio_result_from_analysis(analysis_id, domain, fmt, data_freshness, suggested)
+        return result, inputs(domain, monthly=intent.grain is TimeGrain.month)
     if intent.mode is AnalysisMode.compare and intent.grain:
         current, baseline = periods_for_grain(intent.grain)
         comparison = analysis.compare(metric, current, baseline)
-        return studio_result_from_comparison(analysis_id, comparison, fmt, data_freshness)
+        return studio_result_from_comparison(analysis_id, comparison, fmt, data_freshness), None
     domain = analysis.aggregate(metric, period)
-    return studio_result_from_analysis(analysis_id, domain, fmt, data_freshness, suggested)
+    result = studio_result_from_analysis(analysis_id, domain, fmt, data_freshness, suggested)
+    return result, inputs(domain, monthly=False)
+
+
+def _augment_with_report(
+    question: str,
+    result: AnalysisResult,
+    inputs: _ReportInputs,
+    config: InsyteConfig,
+    schema: SchemaService,
+    freshness: DataFreshness,
+) -> Iterator[str]:
+    """Generate an AI analyst report over the completed result and attach it in place."""
+
+    # Imported lazily so the base analysis path never pays for the report machinery.
+    from insyte.analytics.report import build_report_context
+    from insyte.nl.llm import resolve_report
+
+    if not config.ai.detailed_reports:
+        return
+    backends = available_backends(config.ai.studio_backend)
+    if not backends:
+        result.warnings.append("Detailed report skipped: no local AI CLI (claude/codex) found.")
+        yield sse("report_skipped", {"reason": "no_backend"})
+        return
+
+    yield sse("report_generating", {"backend": backends[0].name})
+
+    # A supporting monthly trend gives the report a real chart (even for a scalar answer) and
+    # lets the AI assess direction. Fall back to the primary series when it is already monthly.
+    trend = inputs.trend
+    if trend is not None and trend.rows:
+        result.charts.extend(
+            studio_result_from_analysis(result.analysis_id, trend, inputs.fmt, freshness, []).charts
+        )
+        series, points = trend, _monthly_points(trend)
+    elif inputs.monthly:
+        series, points = None, _monthly_points(inputs.domain)
+    else:
+        series, points = None, None
+
+    payload = build_report_context(
+        question=question,
+        domain=inputs.domain,
+        metric=inputs.metric,
+        fmt=inputs.fmt,
+        profiles=schema.column_profiles(),
+        period_label=inputs.period_label,
+        freshness_mode=freshness.mode,
+        last_scan=freshness.last_scan,
+        forecast_points=points,
+        trend=series,
+        now=datetime.now(UTC),
+    )
+    report = None
+    for backend in backends:
+        report = resolve_report(payload, backend)
+        if report is not None:
+            break
+    if report is None:
+        result.warnings.append("Detailed report could not be generated this time.")
+        yield sse("report_failed", {})
+        return
+    result.report = report
+    yield sse("report_ready", {"backend": report.generated_by})
+
+
+def _supporting_trend(analysis: AnalysisService, metric: str) -> DomainAnalysisResult | None:
+    """A best-effort full-history monthly series for ``metric``; ``None`` if it has no time axis."""
+
+    try:
+        return analysis.timeseries(metric, TimeGrain.month)
+    except InsyteError:
+        return None
+
+
+def _monthly_points(domain: DomainAnalysisResult) -> list[tuple[datetime, float]] | None:
+    """Extract ``(month_start, value)`` points from a month-grained timeseries domain result."""
+
+    if domain.kind is not AnalysisKind.timeseries or len(domain.columns) < 2:
+        return None
+    points: list[tuple[datetime, float]] = []
+    for row in domain.rows:
+        if row[0] is None or row[1] is None:
+            continue
+        try:
+            points.append((_as_datetime(row[0]), float(row[1])))  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            continue
+    return points or None
 
 
 def _as_datetime(value: object) -> datetime:
@@ -191,7 +322,7 @@ def _forecast(
     fmt: MetricFormat,
     freshness: DataFreshness,
     suggested: list[str],
-) -> AnalysisResult:
+) -> tuple[AnalysisResult, DomainAnalysisResult]:
     """Project the current year from the metric's real monthly actuals (deterministic)."""
 
     domain = analysis.timeseries(metric, TimeGrain.month)
@@ -204,7 +335,7 @@ def _forecast(
     ]
     projection = project_current_year(points, datetime.now(UTC))
     if projection is None:
-        return result
+        return result, domain
 
     projected = format_value(projection.projected_total, fmt)
     ytd = format_value(projection.ytd_actual, fmt)
@@ -237,7 +368,7 @@ def _forecast(
         "Estimate, not a guarantee: the remaining months are projected at the trailing "
         f"{projection.basis_months}-month average. Actual results will vary."
     ]
-    return result
+    return result, domain
 
 
 _PREFERRED_METRICS = ("grand_total", "total_amount", "revenue", "sales", "order_count", "amount")
