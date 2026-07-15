@@ -9,7 +9,16 @@ import pytest
 
 from insyte.analytics.models import TimeGrain
 from insyte.nl import llm
-from insyte.nl.llm import Backend, NLResolution, _extract_json, _validate, detect_backend, resolve
+from insyte.nl.llm import (
+    Backend,
+    NLResolution,
+    _extract_json,
+    _validate,
+    builtin_conversation_reply,
+    detect_backend,
+    is_analytics_question,
+    resolve,
+)
 from insyte.semantic.models import Dimension, Metric, MetricFormat, SemanticLayer
 from insyte.tui.intent import AnalysisMode
 
@@ -136,9 +145,61 @@ def test_validate_rejects_out_of_range_period() -> None:
     assert res is not None and res.period is None
 
 
-def test_validate_message() -> None:
+def test_validate_legacy_message_fails_closed() -> None:
     res = _validate({"kind": "message", "text": "Hi there!"}, _layer())
-    assert res == NLResolution("message", text="Hi there!")
+    assert res == NLResolution("out_of_scope")
+
+
+def test_validate_grounded_guidance() -> None:
+    res = _validate(
+        {"kind": "guidance", "text": "Compare order_count by city and product_name."},
+        _layer(),
+    )
+    assert res == NLResolution(
+        "guidance", text="Compare order_count by city and product_name."
+    )
+
+
+def test_validate_ungrounded_guidance_fails_closed() -> None:
+    res = _validate(
+        {"kind": "guidance", "text": "The Java diamond problem involves inheritance."},
+        _layer(),
+    )
+    assert res == NLResolution("out_of_scope")
+
+
+@pytest.mark.parametrize(
+    ("question", "expected"),
+    [
+        ("what is diamond problem in java", False),
+        ("write a poem about databases", False),
+        ("roughly how much money did we make overall", True),
+        ("show order count by city", True),
+    ],
+)
+def test_analytics_scope_gate(question: str, expected: bool) -> None:
+    assert is_analytics_question(question, _layer()) is expected
+
+
+def test_analytics_scope_gate_allows_contextual_follow_up() -> None:
+    assert is_analytics_question("what about the previous period?", _layer(), has_context=True)
+
+
+@pytest.mark.parametrize(
+    ("question", "expected"),
+    [
+        ("HI", "Hi!"),
+        ("Good morning", "Good morning!"),
+        ("what u can do", "I analyze the connected business data."),
+        ("what is object oriented programming", None),
+    ],
+)
+def test_builtin_conversation_reply(question: str, expected: str | None) -> None:
+    reply = builtin_conversation_reply(question)
+    if expected is None:
+        assert reply is None
+    else:
+        assert reply is not None and expected in reply
 
 
 def test_validate_forecast_mode() -> None:

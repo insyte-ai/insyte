@@ -231,7 +231,10 @@ html, body {
 #chat-log { flex: 1 1 auto; }
 .composer-wrap { margin: 0 auto; width: 100%; }
 .chat.empty .composer-wrap { max-width: 620px; }
-.chat:not(.empty) .composer-wrap { position: sticky; bottom: 0; z-index: 2; background: var(--bg); padding: 10px 0; }
+.chat:not(.empty) .composer-wrap {
+  position: sticky; bottom: 0; z-index: 2; padding: 10px 0;
+  background: transparent;
+}
 
 /* Composer "+" options button + popover menu (ChatGPT-style) */
 .composer-plus-wrap { position: relative; flex: none; align-self: center; }
@@ -479,38 +482,66 @@ pre.sql {
 
 /* Chart (inline SVG) */
 .chart-shell {
-  border: 1px solid var(--border); border-radius: 8px; background: var(--panel);
-  overflow: hidden; min-height: 0;
+  border: 1px solid var(--border); border-radius: 8px;
+  background: color-mix(in srgb, var(--panel) 96%, var(--accent));
+  overflow: hidden; min-height: 0; box-shadow: 0 1px 0 color-mix(in srgb, var(--text) 4%, transparent);
 }
 .chart-toolbar {
-  display: flex; align-items: center; justify-content: space-between; gap: 10px;
-  padding: 8px 10px; border-bottom: 1px solid var(--border); background: var(--bg-elev);
+  display: flex; align-items: center; gap: 11px; min-height: 58px;
+  padding: 10px 12px; border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg-elev) 94%, var(--accent));
 }
+.chart-icon {
+  display: inline-grid; place-items: center; flex: 0 0 auto; width: 34px; height: 34px;
+  color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 18%, var(--border));
+  border-radius: 7px; background: color-mix(in srgb, var(--accent) 12%, var(--panel));
+  box-shadow: inset 0 0 12px color-mix(in srgb, var(--accent) 7%, transparent);
+}
+.chart-icon svg { width: 18px; height: 18px; }
+.chart-icon.growth { color: color-mix(in srgb, var(--accent) 72%, #42a5ff); }
+.chart-heading { display: grid; gap: 1px; min-width: 0; margin-right: auto; }
 .chart-title {
   min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  font-size: 12.5px; font-weight: 650; color: var(--text-dim);
+  font-size: 13px; font-weight: 680; color: var(--text);
 }
+.chart-meta { flex: none; font-size: 11px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
 .chart-expand, .chart-close {
   border: 1px solid var(--border); background: var(--panel); color: var(--text);
   width: 28px; height: 28px; border-radius: 7px; cursor: pointer;
   display: inline-flex; align-items: center; justify-content: center;
 }
 .chart-expand:hover, .chart-close:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
-.chart-wrap { width: 100%; overflow-x: auto; padding: 8px 10px 4px; }
-.insyte-chart { display: block; min-width: 520px; height: 220px; }
-svg .axis { stroke: var(--border); stroke-width: 1; }
-svg .grid-line { stroke: var(--border); stroke-width: 1; opacity: 0.45; }
-svg .axis-label { fill: var(--text-dim); font-size: 10px; opacity: 0.78; }
-svg .bar { fill: color-mix(in srgb, var(--accent) 78%, #fff); transition: opacity 0.12s ease, filter 0.12s ease; outline: none; cursor: crosshair; }
-svg .bar:hover, svg .bar:focus { opacity: 0.9; filter: drop-shadow(0 0 5px color-mix(in srgb, var(--accent) 50%, transparent)); }
-svg .area { fill: color-mix(in srgb, var(--accent) 13%, transparent); }
-svg .line { stroke: var(--accent); fill: none; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
-svg .dot { fill: var(--panel); stroke: var(--accent); stroke-width: 2.5; outline: none; cursor: crosshair; }
-svg .dot:hover, svg .dot:focus { fill: var(--accent); }
+.chart-wrap { width: 100%; overflow-x: auto; padding: 8px 10px 2px; }
+.insyte-chart { display: block; min-width: 520px; height: 238px; overflow: visible; }
+svg .grid-line { stroke: var(--border); stroke-width: 1; opacity: 0.62; stroke-dasharray: 2 5; }
+svg .zero-line { stroke: color-mix(in srgb, var(--text-dim) 58%, var(--border)); stroke-width: 1.2; }
+svg .axis-label, svg .x-label { fill: var(--text-dim); font-size: 9.5px; font-variant-numeric: tabular-nums; }
+svg .x-label { font-weight: 520; }
+svg .bar-stop-top { stop-color: color-mix(in srgb, var(--accent) 76%, #fff); }
+svg .bar-stop-bottom { stop-color: color-mix(in srgb, var(--accent) 86%, #171d4a); }
+svg .bar {
+  transition: opacity 0.12s ease, filter 0.12s ease; outline: none; cursor: crosshair;
+  stroke: color-mix(in srgb, var(--accent) 72%, #fff); stroke-width: 0.7;
+}
+svg .bar:hover, svg .bar:focus { opacity: 0.82; filter: drop-shadow(0 5px 8px color-mix(in srgb, var(--accent) 24%, transparent)); }
+svg .bar-value { fill: var(--text); font-size: 9px; font-weight: 700; font-variant-numeric: tabular-nums; }
+svg .area-stop-top { stop-color: var(--accent); stop-opacity: 0.24; }
+svg .area-stop-bottom { stop-color: var(--accent); stop-opacity: 0.015; }
+svg .line {
+  stroke: var(--accent); fill: none; stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round;
+  filter: drop-shadow(0 0 5px color-mix(in srgb, var(--accent) 48%, transparent));
+}
+svg .dot {
+  fill: color-mix(in srgb, var(--panel) 68%, #fff); stroke: var(--accent); stroke-width: 2;
+  pointer-events: none; filter: drop-shadow(0 0 4px color-mix(in srgb, var(--accent) 70%, transparent));
+}
+svg .dot.latest { fill: #fff; stroke: var(--accent); stroke-width: 2.5; }
 svg .dot-hit { fill: transparent; outline: none; cursor: crosshair; }
-svg text { fill: var(--text-dim); font-size: 10px; }
+svg .dot-hit:focus { stroke: var(--accent); stroke-width: 1; }
+svg .hover-guide { stroke: var(--accent); stroke-width: 1; stroke-dasharray: 3 4; transition: opacity 0.1s ease; }
+svg text { fill: var(--text-dim); font-size: 10px; letter-spacing: 0; }
 svg .chart-tip { transition: opacity 0.1s ease; }
-svg .tip-bg { fill: var(--panel); stroke: var(--border); filter: drop-shadow(0 6px 14px rgba(0,0,0,0.22)); }
+svg .tip-bg { fill: var(--panel); stroke: color-mix(in srgb, var(--accent) 35%, var(--border)); filter: drop-shadow(0 8px 18px rgba(0,0,0,0.28)); }
 svg .tip-label { fill: var(--text-dim); font-size: 9.5px; }
 svg .tip-value { fill: var(--text); font-size: 11px; font-weight: 700; }
 .chart-modal {
@@ -594,21 +625,47 @@ svg .tip-value { fill: var(--text); font-size: 11px; font-weight: 700; }
 .conf-chip.low { color: var(--red); background: color-mix(in srgb, var(--red) 14%, transparent); }
 
 /* chart grid */
-.chart-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 12px; align-items: stretch; }
-.chart-card { border: 1px solid var(--border); border-radius: 10px; padding: 10px; background: var(--bg-elev); }
+.chart-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 12px; align-items: stretch; }
+.chart-card { min-width: 0; }
 .chart-card .cc-title { font-size: 12px; font-weight: 700; color: var(--text-dim); margin: 0 0 8px; }
 .chart-card .chart-shell { background: var(--panel); }
 
 /* horizontal share bars */
-.share, .growth { display: flex; flex-direction: column; gap: 7px; }
-.share-row, .g-row { display: grid; grid-template-columns: 92px 1fr 42px; align-items: center; gap: 8px; font-size: 12.5px; }
+.share, .growth { display: flex; flex-direction: column; gap: 8px; padding: 3px 2px 7px; }
+.g-scale {
+  display: grid; grid-template-columns: 112px 1fr 46px; align-items: center; gap: 10px;
+  margin-bottom: -2px; color: var(--text-dim); font-size: 9px; font-variant-numeric: tabular-nums;
+}
+.g-scale-axis { display: flex; align-items: center; justify-content: space-between; padding-inline: 1px; }
+.share-row, .g-row { display: grid; grid-template-columns: 112px 1fr 46px; align-items: center; gap: 10px; font-size: 12px; }
 .share-label, .g-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-dim); }
-.share-track, .g-track { height: 10px; background: var(--bg-sunk); border-radius: 999px; overflow: hidden; }
-.share-fill { height: 100%; border-radius: 999px; background: var(--accent); }
+.share-track, .g-track {
+  height: 11px; background: color-mix(in srgb, var(--bg-sunk) 90%, var(--accent));
+  border: 1px solid color-mix(in srgb, var(--border) 84%, var(--accent)); border-radius: 999px; overflow: hidden;
+}
+.g-track {
+  position: relative; overflow: visible;
+  background:
+    linear-gradient(90deg,
+      color-mix(in srgb, var(--red) 4%, var(--bg-sunk)) 0 50%,
+      color-mix(in srgb, var(--green) 4%, var(--bg-sunk)) 50% 100%);
+}
+.share-fill { height: 100%; border-radius: 999px; background: linear-gradient(90deg, var(--accent), color-mix(in srgb, var(--accent) 66%, #55d8ff)); }
 .share-pct { text-align: right; font-variant-numeric: tabular-nums; color: var(--text); }
-.g-fill { height: 100%; border-radius: 999px; }
-.g-fill.up { background: var(--green); }
-.g-fill.down { background: var(--red); }
+.g-zero {
+  position: absolute; z-index: 2; left: 50%; top: -4px; bottom: -4px; width: 1px;
+  background: color-mix(in srgb, var(--text-dim) 70%, var(--border));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--panel) 72%, transparent);
+}
+.g-fill { position: absolute; top: -1px; bottom: -1px; }
+.g-fill.up { left: 50%; border-radius: 0 999px 999px 0; }
+.g-fill.down { right: 50%; border-radius: 999px 0 0 999px; }
+.g-fill.up { background: linear-gradient(90deg, #17c99a, #43dfb7); box-shadow: 0 0 8px color-mix(in srgb, var(--green) 36%, transparent); }
+.g-fill.down { background: linear-gradient(90deg, #ff8a7d, #ff6868); box-shadow: 0 0 8px color-mix(in srgb, var(--red) 32%, transparent); }
+.g-neutral {
+  position: absolute; z-index: 3; left: 50%; top: 50%; width: 5px; height: 5px;
+  border-radius: 50%; background: var(--text-dim); transform: translate(-50%, -50%);
+}
 .g-pct { text-align: right; font-variant-numeric: tabular-nums; }
 .g-pct.up { color: var(--green); }
 .g-pct.down { color: var(--red); }
@@ -735,4 +792,8 @@ svg .tip-value { fill: var(--text); font-size: 11px; font-weight: 700; }
   .workspace-left, .workspace-right { order: 2; }
   .workspace-center { order: 1; }
   .saved-head { flex-direction: column; }
+  .chart-toolbar { gap: 8px; }
+  .chart-meta { display: none; }
+  .chart-wrap { padding-inline: 4px; }
+  .chart-grid { grid-template-columns: 1fr; }
 }

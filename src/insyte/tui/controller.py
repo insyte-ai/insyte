@@ -111,7 +111,19 @@ class ChatController:
 
         # Imported lazily: insyte.nl.llm imports tui.intent, so a top-level import here would
         # form a circular import through the tui package __init__.
-        from insyte.nl.llm import available_backends, resolve
+        from insyte.nl.llm import (
+            OUT_OF_SCOPE_MESSAGE,
+            available_backends,
+            builtin_conversation_reply,
+            is_analytics_question,
+            resolve,
+        )
+
+        builtin_reply = builtin_conversation_reply(text)
+        if builtin_reply:
+            return Response.message(builtin_reply)
+        if not is_analytics_question(text, self._layer):
+            return Response.message(OUT_OF_SCOPE_MESSAGE)
 
         backends = available_backends("auto")
         if not backends:
@@ -123,8 +135,10 @@ class ChatController:
                 break
         if resolution is None:
             return None
-        if resolution.kind == "message":
-            return Response.message(resolution.text or "I can help you analyse your data.")
+        if resolution.kind == "out_of_scope":
+            return Response.message(OUT_OF_SCOPE_MESSAGE)
+        if resolution.kind == "guidance":
+            return Response.message(resolution.text or OUT_OF_SCOPE_MESSAGE)
         intent = Intent(
             IntentKind.analysis,
             mode=resolution.mode or AnalysisMode.aggregate,

@@ -205,7 +205,7 @@ class InvestigationResult(BaseModel):
 
 class AnalysisResult(BaseModel):
     analysis_id: str
-    status: str = "completed"  # completed | blocked | error | unrecognized
+    status: str = "completed"  # completed | message | guidance | blocked | error | out_of_scope
     summary: str
     narrative: str = ""
     metrics: list[MetricCard] = Field(default_factory=list)

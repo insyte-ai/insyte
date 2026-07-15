@@ -823,7 +823,10 @@
     if (r.contributors && r.contributors.length > 1) {
       cards.push(chartCard(
         "Contribution share",
-        chartFrame("Contribution share", () => shareChart(r.contributors))
+        chartFrame("Contribution share", () => shareChart(r.contributors), {
+          kind: "share",
+          meta: Math.min(8, r.contributors.length) + " contributors",
+        })
       ));
     }
     const spec = r.charts && r.charts[0];
@@ -834,7 +837,10 @@
       if (values.length > 1) {
         cards.push(chartCard(
           "Period-over-period growth",
-          chartFrame("Period-over-period growth", () => growthBars(labels, values))
+          chartFrame("Period-over-period growth", () => growthBars(labels, values), {
+            kind: "growth",
+            meta: (values.length - 1) + " comparisons",
+          })
         ));
       }
     }
@@ -859,18 +865,49 @@
   }
 
   function growthBars(labels, values) {
-    const rows = [];
+    const changes = [];
     for (let i = 1; i < values.length; i++) {
       const prev = values[i - 1];
       const pct = prev ? ((values[i] - prev) / prev) * 100 : 0;
+      changes.push({ label: labels[i], pct });
+    }
+    const maxChange = Math.max(...changes.map((item) => Math.abs(item.pct)), 1);
+    const scaleLimit = niceGrowthLimit(maxChange);
+    const rows = [];
+    changes.forEach(({ label, pct }) => {
       const dir = pct >= 0 ? "up" : "down";
-      rows.push(el("div", { class: "g-row" },
-        el("div", { class: "g-label", title: labels[i] }, labels[i]),
-        el("div", { class: "g-track" }, el("div", { class: "g-fill " + dir, style: "width:" + Math.max(3, Math.min(100, Math.abs(pct))) + "%" })),
+      const width = pct === 0 ? 0 : Math.max(1.5, (Math.abs(pct) / scaleLimit) * 50);
+      rows.push(el("div", { class: "g-row", "aria-label": label + ": " + pct.toFixed(1) + "%" },
+        el("div", { class: "g-label", title: label }, formatChartLabel(label)),
+        el("div", { class: "g-track" },
+          el("span", { class: "g-zero", "aria-hidden": "true" }),
+          width ? el("div", { class: "g-fill " + dir, style: "width:" + width + "%" }) : null,
+          !width ? el("span", { class: "g-neutral", "aria-hidden": "true" }) : null
+        ),
         el("div", { class: "g-pct " + dir }, (pct >= 0 ? "+" : "") + pct.toFixed(0) + "%")
       ));
-    }
-    return el("div", { class: "growth" }, ...rows);
+    });
+    const scaleLabel = compact(scaleLimit) + "%";
+    return el("div", { class: "growth" },
+      el("div", { class: "g-scale", "aria-hidden": "true" },
+        el("span", {}),
+        el("div", { class: "g-scale-axis" },
+          el("span", {}, "−" + scaleLabel),
+          el("span", {}, "0"),
+          el("span", {}, "+" + scaleLabel)
+        ),
+        el("span", {})
+      ),
+      ...rows
+    );
+  }
+
+  function niceGrowthLimit(maxChange) {
+    const padded = Math.max(1, maxChange * 1.2);
+    const magnitude = 10 ** Math.floor(Math.log10(padded));
+    const normalized = padded / magnitude;
+    const step = [1, 2, 5, 10].find((candidate) => candidate >= normalized) || 10;
+    return step * magnitude;
   }
 
   function insightCard(ins) {
@@ -976,24 +1013,45 @@
       spec.title || "Chart",
       () => spec.type === "line"
         ? lineChart(labels, values, seriesLabel)
-        : barChart(labels, values, seriesLabel)
+        : barChart(labels, values, seriesLabel),
+      {
+        kind: spec.type === "line" ? "Trend" : "Breakdown",
+        meta: values.length + (values.length === 1 ? " data point" : " data points"),
+      }
     );
   }
 
   function chartFrame(title, render, options) {
     const body = el("div", { class: "chart-wrap" }, render());
     const btn = options && options.modal ? null : el("button", { class: "chart-expand", title: "Expand chart", "aria-label": "Expand chart" }, "⛶");
-    if (btn) btn.addEventListener("click", () => openChartFullscreen(title, render));
+    if (btn) btn.addEventListener("click", () => openChartFullscreen(title, render, options));
     return el("div", { class: "chart-shell" },
       el("div", { class: "chart-toolbar" },
-        el("span", { class: "chart-title", title }, title),
+        options && options.kind ? chartHeaderIcon(options.kind) : null,
+        el("div", { class: "chart-heading" },
+          el("span", { class: "chart-title", title }, title)
+        ),
+        options && options.meta ? el("span", { class: "chart-meta" }, options.meta) : null,
         btn
       ),
       body
     );
   }
 
-  function openChartFullscreen(title, render) {
+  function chartHeaderIcon(kind) {
+    const paths = kind === "growth"
+      ? '<path d="M5 19V9m5 10V5m5 14v-7m4 7V3"/><path d="m4 8 5-4 5 5 6-6"/>'
+      : kind === "share"
+        ? '<circle cx="12" cy="12" r="8"/><path d="M12 4v8l6 4"/>'
+        : kind === "Breakdown"
+          ? '<path d="M5 19V9h3v10m3 0V5h3v14m3 0v-7h3v7"/>'
+          : '<path d="M4 17 9 12l4 3 7-9"/><path d="M4 20h16"/>';
+    const icon = iconSvg(paths);
+    icon.setAttribute("aria-hidden", "true");
+    return el("span", { class: "chart-icon " + String(kind).toLowerCase() }, icon);
+  }
+
+  function openChartFullscreen(title, render, options) {
     const close = el("button", { class: "chart-close", title: "Close chart", "aria-label": "Close chart" }, "×");
     const overlay = el("div", { class: "chart-modal" },
       el("div", { class: "chart-modal-panel" },
@@ -1001,7 +1059,11 @@
           el("div", { class: "chart-modal-title" }, title),
           close
         ),
-        el("div", { class: "chart-modal-body" }, chartFrame(title, render, { modal: true }))
+        el("div", { class: "chart-modal-body" }, chartFrame(title, render, {
+          modal: true,
+          kind: options && options.kind,
+          meta: options && options.meta,
+        }))
       )
     );
     const done = () => {
@@ -1015,7 +1077,8 @@
     document.body.append(overlay);
   }
 
-  const W = 760, H = 260, PAD = 42;
+  const W = 760, H = 276, LEFT = 58, RIGHT = 20, TOP = 24, BOTTOM = 48;
+  let chartId = 0;
   function svgNode(tag, attrs) {
     const n = document.createElementNS("http://www.w3.org/2000/svg", tag);
     for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
@@ -1023,25 +1086,28 @@
   }
   function scaleY(v, min, max) {
     const range = max - min || 1;
-    return H - PAD - ((v - min) / range) * (H - 2 * PAD);
+    return H - BOTTOM - ((v - min) / range) * (H - TOP - BOTTOM);
   }
   function chartBounds(values) {
     const rawMin = Math.min(...values, 0);
-    const rawMax = Math.max(...values, 1);
-    const pad = Math.max((rawMax - rawMin) * 0.12, rawMax === rawMin ? Math.abs(rawMax) * 0.08 : 0);
-    return { min: Math.min(0, rawMin - pad), max: rawMax + pad };
+    const rawMax = Math.max(...values, 0);
+    const span = rawMax - rawMin;
+    const pad = span ? span * 0.1 : Math.max(Math.abs(rawMax) * 0.1, 1);
+    return { min: rawMin < 0 ? rawMin - pad : 0, max: rawMax > 0 ? rawMax + pad : pad };
   }
   function grid(svg, min, max) {
-    [0, 0.5, 1].forEach((ratio) => {
-      const y = PAD + (H - 2 * PAD) * ratio;
-      svg.append(svgNode("line", { class: "grid-line", x1: PAD, y1: y, x2: W - 16, y2: y }));
+    [0, 0.25, 0.5, 0.75, 1].forEach((ratio) => {
+      const value = max - (max - min) * ratio;
+      const y = TOP + (H - TOP - BOTTOM) * ratio;
+      svg.append(svgNode("line", { class: "grid-line", x1: LEFT, y1: y, x2: W - RIGHT, y2: y }));
+      const label = svgNode("text", { class: "axis-label", x: LEFT - 10, y: y + 3, "text-anchor": "end" });
+      label.textContent = compact(value);
+      svg.append(label);
     });
-    const maxLabel = svgNode("text", { class: "axis-label", x: PAD, y: PAD - 10 });
-    maxLabel.textContent = compact(max);
-    svg.append(maxLabel);
-    const minLabel = svgNode("text", { class: "axis-label", x: PAD, y: H - 10 });
-    minLabel.textContent = compact(min);
-    svg.append(minLabel);
+    if (min < 0 && max > 0) {
+      const zeroY = scaleY(0, min, max);
+      svg.append(svgNode("line", { class: "zero-line", x1: LEFT, y1: zeroY, x2: W - RIGHT, y2: zeroY }));
+    }
   }
   function formatChartLabel(value) {
     const text = String(value ?? "");
@@ -1059,7 +1125,7 @@
     const valueText = (key ? key + ": " : "") + compact(value);
     const width = Math.max(88, Math.min(170, Math.max(label.length, valueText.length) * 6.4 + 22));
     const tx = Math.min(W - width - 10, Math.max(10, x - width / 2));
-    const ty = y < 82 ? y + 42 : y - 44;
+    const ty = y < 68 ? y + 42 : y - 44;
     group.setAttribute("transform", "translate(" + tx + "," + ty + ")");
     group.append(svgNode("rect", { class: "tip-bg", x: 0, y: -14, width, height: 36, rx: 6 }));
     group.append(text);
@@ -1072,38 +1138,88 @@
     return t;
   }
   function hoverTarget(node, tip) {
-    node.addEventListener("mouseenter", () => tip.setAttribute("opacity", "1"));
-    node.addEventListener("mouseleave", () => tip.setAttribute("opacity", "0"));
-    node.addEventListener("focus", () => tip.setAttribute("opacity", "1"));
-    node.addEventListener("blur", () => tip.setAttribute("opacity", "0"));
+    const guide = tip.previousElementSibling && tip.previousElementSibling.classList.contains("hover-guide")
+      ? tip.previousElementSibling : null;
+    const show = () => {
+      tip.setAttribute("opacity", "1");
+      if (guide) guide.setAttribute("opacity", "1");
+    };
+    const hide = () => {
+      tip.setAttribute("opacity", "0");
+      if (guide) guide.setAttribute("opacity", "0");
+    };
+    node.addEventListener("mouseenter", show);
+    node.addEventListener("mouseleave", hide);
+    node.addEventListener("focus", show);
+    node.addEventListener("blur", hide);
+  }
+
+  function chartSvg(kind, key) {
+    return svgNode("svg", {
+      class: "insyte-chart " + kind + "-chart",
+      viewBox: "0 0 " + W + " " + H,
+      width: "100%",
+      height: H,
+      role: "img",
+      "aria-label": key + " " + kind + " chart",
+    });
+  }
+
+  function xLabel(svg, label, x, index, count) {
+    if (count > 12 && index % Math.ceil(count / 8) !== 0 && index !== count - 1) return;
+    const t = svgNode("text", { class: "x-label", x, y: H - BOTTOM + 22, "text-anchor": "middle" });
+    t.textContent = label.length > 10 ? label.slice(0, 9) + "…" : label;
+    svg.append(t);
   }
 
   function barChart(labels, values, key) {
     const { min, max } = chartBounds(values);
-    const svg = svgNode("svg", { class: "insyte-chart", viewBox: "0 0 " + W + " " + H, width: "100%", height: H });
+    const svg = chartSvg("bar", key);
+    const id = "bar-fill-" + (++chartId);
+    const defs = svgNode("defs", {});
+    const gradient = svgNode("linearGradient", { id, x1: "0", y1: "0", x2: "0", y2: "1" });
+    gradient.append(
+      svgNode("stop", { offset: "0%", class: "bar-stop-top" }),
+      svgNode("stop", { offset: "100%", class: "bar-stop-bottom" })
+    );
+    defs.append(gradient);
+    svg.append(defs);
     grid(svg, min, max);
-    svg.append(svgNode("line", { class: "axis", x1: PAD, y1: H - PAD, x2: W - 16, y2: H - PAD }));
-    const bw = (W - PAD - 12) / labels.length;
+    const baseline = scaleY(Math.min(max, Math.max(min, 0)), min, max);
+    const bw = (W - LEFT - RIGHT) / labels.length;
     labels.forEach((lab, i) => {
-      const x = PAD + i * bw + bw * 0.15;
-      const y = scaleY(values[i], min, max);
+      const x = LEFT + i * bw + bw * 0.18;
+      const valueY = scaleY(values[i], min, max);
+      const y = Math.min(valueY, baseline);
+      const height = Math.max(1, Math.abs(baseline - valueY));
       const bar = svgNode("rect", {
         class: "bar",
         x,
         y,
-        width: bw * 0.7,
-        height: H - PAD - y,
-        rx: 5,
+        width: Math.max(3, bw * 0.64),
+        height,
+        rx: Math.min(6, Math.max(2, bw * 0.12)),
+        fill: "url(#" + id + ")",
         tabindex: 0,
+        "aria-label": lab + ": " + values[i],
       });
-      const tip = tooltip(svg, lab, values[i], x + bw * 0.35, y, key);
-      hoverTarget(bar, tip);
       svg.append(bar);
-      if (labels.length <= 12 || i % Math.ceil(labels.length / 8) === 0) {
-        const t = svgNode("text", { x: x + bw * 0.35, y: H - PAD + 16, "text-anchor": "middle" });
-        t.textContent = lab.length > 8 ? lab.slice(0, 7) + "…" : lab;
-        svg.append(t);
+      const center = x + Math.max(3, bw * 0.64) / 2;
+      if (labels.length <= 8) {
+        const valueLabel = svgNode("text", {
+          class: "bar-value",
+          x: center,
+          y: values[i] >= 0 ? y - 8 : y + height + 13,
+          "text-anchor": "middle",
+        });
+        valueLabel.textContent = compact(values[i]);
+        svg.append(valueLabel);
       }
+      xLabel(svg, lab, center, i, labels.length);
+      const guide = svgNode("line", { class: "hover-guide", x1: center, y1: TOP, x2: center, y2: H - BOTTOM, opacity: "0" });
+      svg.append(guide);
+      const tip = tooltip(svg, lab, values[i], center, y, key);
+      hoverTarget(bar, tip);
       svg.append(tip);
     });
     return svg;
@@ -1111,27 +1227,33 @@
 
   function lineChart(labels, values, key) {
     const { min, max } = chartBounds(values);
-    const svg = svgNode("svg", { class: "insyte-chart", viewBox: "0 0 " + W + " " + H, width: "100%", height: H });
+    const svg = chartSvg("line", key);
+    const id = "line-fill-" + (++chartId);
+    const defs = svgNode("defs", {});
+    const gradient = svgNode("linearGradient", { id, x1: "0", y1: "0", x2: "0", y2: "1" });
+    gradient.append(
+      svgNode("stop", { offset: "0%", class: "area-stop-top" }),
+      svgNode("stop", { offset: "100%", class: "area-stop-bottom" })
+    );
+    defs.append(gradient);
+    svg.append(defs);
     grid(svg, min, max);
-    svg.append(svgNode("line", { class: "axis", x1: PAD, y1: H - PAD, x2: W - 16, y2: H - PAD }));
-    const step = labels.length > 1 ? (W - PAD - 12) / (labels.length - 1) : 0;
-    const points = values.map((v, i) => [PAD + i * step, scaleY(v, min, max)]);
+    const step = labels.length > 1 ? (W - LEFT - RIGHT) / (labels.length - 1) : 0;
+    const points = values.map((v, i) => [LEFT + i * step, scaleY(v, min, max)]);
     const linePath = smoothPath(points);
-    const areaPath = linePath + " L " + points[points.length - 1][0] + " " + (H - PAD) +
-      " L " + points[0][0] + " " + (H - PAD) + " Z";
-    svg.append(svgNode("path", { class: "area", d: areaPath }));
+    const floor = scaleY(Math.min(max, Math.max(min, 0)), min, max);
+    const areaPath = linePath + " L " + points[points.length - 1][0] + " " + floor +
+      " L " + points[0][0] + " " + floor + " Z";
+    svg.append(svgNode("path", { class: "area", d: areaPath, fill: "url(#" + id + ")" }));
     svg.append(svgNode("path", { class: "line", d: linePath }));
     values.forEach((v, i) => {
       const x = points[i][0], y = points[i][1];
-      if (labels.length <= 12 || i % Math.ceil(labels.length / 8) === 0) {
-        const t = svgNode("text", { x, y: H - PAD + 16, "text-anchor": "middle" });
-        t.textContent = labels[i].length > 8 ? labels[i].slice(0, 7) + "…" : labels[i];
-        svg.append(t);
-      }
-      const dot = svgNode("circle", { class: "dot", cx: x, cy: y, r: 4, tabindex: 0 });
-      const hit = svgNode("circle", { class: "dot-hit", cx: x, cy: y, r: 13, tabindex: 0 });
+      xLabel(svg, labels[i], x, i, labels.length);
+      const guide = svgNode("line", { class: "hover-guide", x1: x, y1: TOP, x2: x, y2: H - BOTTOM, opacity: "0" });
+      svg.append(guide);
+      const dot = svgNode("circle", { class: "dot" + (i === values.length - 1 ? " latest" : ""), cx: x, cy: y, r: i === values.length - 1 ? 5 : 3.5 });
+      const hit = svgNode("circle", { class: "dot-hit", cx: x, cy: y, r: 14, tabindex: 0, "aria-label": labels[i] + ": " + v });
       const tip = tooltip(svg, labels[i], v, x, y, key);
-      hoverTarget(dot, tip);
       hoverTarget(hit, tip);
       svg.append(dot, hit);
       svg.append(tip);

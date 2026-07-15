@@ -412,6 +412,16 @@ def test_spa_assets_served(client: TestClient) -> None:
     assert "Investigation timeline" in js.text
     assert "openChartFullscreen" in js.text
     assert "chart-tip" in js.text
+    assert 'kind: spec.type === "line" ? "Trend" : "Breakdown"' in js.text
+    assert 'class: "zero-line"' in js.text
+    assert "bar-stop-top" in js.text
+    assert "area-stop-top" in js.text
+    assert "chartHeaderIcon" in js.text
+    assert "maxChange" in js.text
+    assert 'class: "g-zero"' in js.text
+    assert "* 50" in js.text
+    assert "niceGrowthLimit" in js.text
+    assert 'class: "g-scale-axis"' in js.text
     assert "renderInvestigationsPage" in js.text
     assert "report-mode-btn" in js.text
     assert "exportMarkdown" in js.text
@@ -430,13 +440,36 @@ def test_bad_host_header_rejected(client: TestClient) -> None:
 
 
 def test_unrecognised_question(client: TestClient) -> None:
-    # With no AI backend (forced off), a non-metric question falls back to "unrecognized".
+    # Clearly unrelated input is rejected before any AI backend can answer it.
     conv = client.post("/api/conversations", json={}).json()
     posted = client.post(
-        f"/api/conversations/{conv['id']}/messages", json={"content": "hello there"}
+        f"/api/conversations/{conv['id']}/messages",
+        json={"content": "what is diamond problem in java"},
     ).json()
     result = _final_result(client.get(posted["stream_url"]).text)
-    assert result["status"] == "unrecognized"
+    assert result["status"] == "out_of_scope"
+    assert "connected business data" in result["summary"]
+    assert "diamond" not in result["summary"].lower()
+
+
+@pytest.mark.parametrize(
+    ("question", "expected"),
+    [
+        ("HI", "Hi!"),
+        ("Good morning", "Good morning!"),
+        ("what u can do", "I analyze the connected business data."),
+    ],
+)
+def test_safe_builtin_conversation(
+    client: TestClient, question: str, expected: str
+) -> None:
+    conv = client.post("/api/conversations", json={}).json()
+    posted = client.post(
+        f"/api/conversations/{conv['id']}/messages", json={"content": question}
+    ).json()
+    result = _final_result(client.get(posted["stream_url"]).text)
+    assert result["status"] == "message"
+    assert expected in result["summary"]
 
 
 def test_free_form_question_resolved_by_llm(
@@ -467,7 +500,7 @@ def test_free_form_question_resolved_by_llm(
     assert result["status"] == "completed"
 
 
-def test_free_form_chit_chat_returns_message(
+def test_free_form_analytics_guidance_is_grounded(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from insyte.nl.llm import Backend, NLResolution
@@ -477,14 +510,19 @@ def test_free_form_chit_chat_returns_message(
     monkeypatch.setattr(
         events,
         "resolve",
-        lambda *_a, **_k: NLResolution("message", text="Hi! Ask me about your orders or revenue."),
+        lambda *_a, **_k: NLResolution(
+            "guidance", text="Compare completed revenue by city and inspect its monthly trend."
+        ),
     )
 
     conv = client.post("/api/conversations", json={}).json()
-    posted = client.post(f"/api/conversations/{conv['id']}/messages", json={"content": "hi"}).json()
+    posted = client.post(
+        f"/api/conversations/{conv['id']}/messages",
+        json={"content": "how can we improve business performance"},
+    ).json()
     result = _final_result(client.get(posted["stream_url"]).text)
-    assert result["status"] == "message"
-    assert "Ask me about" in result["summary"]
+    assert result["status"] == "guidance"
+    assert "completed revenue" in result["summary"]
 
 
 def test_free_form_forecast_projects_year(

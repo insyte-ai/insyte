@@ -184,9 +184,16 @@ def test_analysis_error_becomes_message(metadata: MetadataRepository) -> None:
 
 
 def test_unknown_input(metadata: MetadataRepository) -> None:
-    response = _controller(metadata).run("what is the meaning of life")
-    assert response.level == "error"
-    assert "couldn't identify" in response.text
+    response = _controller(metadata).run("what is diamond problem in java")
+    assert response.kind is ResponseKind.message
+    assert "connected business data" in response.text
+    assert "diamond" not in response.text.lower()
+
+
+def test_greeting_and_capabilities(metadata: MetadataRepository) -> None:
+    controller = _controller(metadata)
+    assert "Hi!" in controller.run("hello").text
+    assert "calculate metrics" in controller.run("what can you do?").text
 
 
 def test_clear_and_quit(metadata: MetadataRepository) -> None:

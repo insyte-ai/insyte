@@ -21,7 +21,13 @@ from insyte.analytics.periods import periods_for_grain
 from insyte.config.models import AnalyticsMode, InsyteConfig
 from insyte.connectors.base import DatabaseConnector
 from insyte.exceptions import InsyteError, QueryValidationError
-from insyte.nl.llm import available_backends, resolve
+from insyte.nl.llm import (
+    OUT_OF_SCOPE_MESSAGE,
+    available_backends,
+    builtin_conversation_reply,
+    is_analytics_question,
+    resolve,
+)
 from insyte.nl.periods import period_from_token
 from insyte.semantic.models import Metric, MetricFormat, SemanticLayer
 from insyte.services.analysis_service import AnalysisService
@@ -81,6 +87,38 @@ def stream_analysis(
 
     period: Period | None = None
     if intent.kind is not IntentKind.analysis or intent.metric is None:
+        builtin_reply = builtin_conversation_reply(question)
+        if builtin_reply:
+            result = studio_result_message(
+                analysis_id,
+                builtin_reply,
+                status="message",
+                suggested=_suggestions(layer),
+            )
+            context = _final_context(
+                question, result, chat_context, intent, period, detailed=detailed
+            )
+            result.context = context.to_dict()
+            on_complete(result, context)
+            yield sse("response_completed", {"result": result.model_dump(mode="json")})
+            return
+
+        has_analysis_context = bool(chat_context and chat_context.active_metric)
+        if not is_analytics_question(question, layer, has_context=has_analysis_context):
+            result = studio_result_message(
+                analysis_id,
+                OUT_OF_SCOPE_MESSAGE,
+                status="out_of_scope",
+                suggested=_suggestions(layer),
+            )
+            context = _final_context(
+                question, result, chat_context, intent, period, detailed=detailed
+            )
+            result.context = context.to_dict()
+            on_complete(result, context)
+            yield sse("response_completed", {"result": result.model_dump(mode="json")})
+            return
+
         # The deterministic parser couldn't map it — ask the user's local AI CLI to translate.
         # Try each installed CLI in turn so a failing one (e.g. an org-disabled Claude) falls
         # through to a working one (e.g. Codex).
@@ -113,11 +151,26 @@ def stream_analysis(
             yield sse("response_completed", {"result": result.model_dump(mode="json")})
             return
 
-        if resolution.kind == "message":
+        if resolution.kind == "out_of_scope":
             result = studio_result_message(
                 analysis_id,
-                resolution.text or "I can help you analyse your data.",
-                status="message",
+                OUT_OF_SCOPE_MESSAGE,
+                status="out_of_scope",
+                suggested=_suggestions(layer),
+            )
+            context = _final_context(
+                question, result, chat_context, intent, period, detailed=detailed
+            )
+            result.context = context.to_dict()
+            on_complete(result, context)
+            yield sse("response_completed", {"result": result.model_dump(mode="json")})
+            return
+
+        if resolution.kind == "guidance":
+            result = studio_result_message(
+                analysis_id,
+                resolution.text or OUT_OF_SCOPE_MESSAGE,
+                status="guidance",
                 suggested=_suggestions(layer),
             )
             context = _final_context(

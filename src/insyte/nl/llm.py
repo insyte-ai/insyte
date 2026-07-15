@@ -50,6 +50,42 @@ _TIMEOUT_SECONDS = float(os.environ.get("INSYTE_STUDIO_LLM_TIMEOUT", "90"))
 # Detailed reports are a larger generation than a one-line intent, so they get a longer budget.
 _REPORT_TIMEOUT_SECONDS = float(os.environ.get("INSYTE_STUDIO_REPORT_TIMEOUT", "180"))
 
+OUT_OF_SCOPE_MESSAGE = (
+    "Insyte only answers questions about the connected business data. "
+    "Ask about a metric, trend, comparison, segment, forecast, or investigation."
+)
+CAPABILITIES_MESSAGE = (
+    "I analyze the connected business data. I can calculate metrics, show trends and "
+    "breakdowns, compare periods, forecast values, and investigate why a metric changed."
+)
+
+_ANALYTICS_CUES = re.compile(
+    r"\b(how many|how much|metric|data|trend|timeseries|time series|breakdown|segment|"
+    r"compare|comparison|versus|change|changed|increase|decrease|drop|growth|forecast|"
+    r"projected|projection|average|total|count|rate|revenue|sales|orders?|customers?|"
+    r"payments?|profit|margin|performance|contribution|outlier|month|quarter|year|week|day)\b",
+    re.IGNORECASE,
+)
+_CONTEXT_FOLLOW_UP = re.compile(
+    r"^\s*(and\b|also\b|what about\b|how about\b|same\b|that\b|those\b|this\b|"
+    r"why\b|how\b|compare\b|break (?:it|that) down\b|show me\b)",
+    re.IGNORECASE,
+)
+_GREETING = re.compile(
+    r"^\s*(hi|hello|hey|hi there|hello there|hey there|howdy|namaste|"
+    r"good morning|good afternoon|good evening)[\s!,.?]*$",
+    re.IGNORECASE,
+)
+_CAPABILITY_QUESTION = re.compile(
+    r"^\s*(what (?:can|could|do) (?:you|u) (?:do|help with)|what (?:you|u) can do|"
+    r"what do (?:you|u) do|"
+    r"how can (?:you|u) help(?: me)?|help)[\s!,.?]*$",
+    re.IGNORECASE,
+)
+_SCOPE_STOP_WORDS = frozenset(
+    {"avg", "average", "count", "public", "sum", "table", "total", "value"}
+)
+
 
 @dataclass
 class Backend:
@@ -61,9 +97,9 @@ class Backend:
 
 @dataclass
 class NLResolution:
-    """The model's answer: either a runnable analysis intent or a plain conversational reply."""
+    """A runnable analysis, grounded analytics guidance, or an out-of-scope result."""
 
-    kind: str  # "analysis" | "message"
+    kind: str  # "analysis" | "guidance" | "out_of_scope"
     text: str | None = None
     metric: str | None = None
     secondary_metric: str | None = None
@@ -146,6 +182,10 @@ def build_prompt(
         f"Time grains: {grains}\n"
         f"Relative periods: {periods}\n\n"
         "Rules:\n"
+        "- This is a data analyst, not a general-purpose assistant. If the question is not "
+        "about the connected business data, its metrics, dimensions, trends, comparisons, "
+        "forecasts, or investigations, return kind 'out_of_scope'. Never answer general "
+        "knowledge, programming, writing, personal advice, or unrelated questions.\n"
         "- Pick the single best metric by NAME from the list above.\n"
         "- mode: 'segment' when the user asks to break down 'by <dimension>'; "
         "'timeseries' for a trend over time (also set grain); "
@@ -158,11 +198,9 @@ def build_prompt(
         "otherwise 'aggregate'.\n"
         "- period: choose one relative period token for time-scoped questions "
         "(e.g. 'last month' -> last_month), else null / all_time.\n"
-        "- If the question asks for advice, an opinion, or a 'why'/'how' that isn't a single "
-        "metric (e.g. 'how can we increase sales?', 'why did revenue drop?'), return a 'message' "
-        "that is genuinely useful: briefly name 2-3 concrete analyses the user can run from the "
-        "metrics and dimensions above to investigate (e.g. revenue by category, repeat customers, "
-        "discount impact). For a greeting or small talk, a short friendly reply.\n\n"
+        "- If an in-scope question asks for advice that cannot run as one analysis, return "
+        "'guidance' that names 2-3 concrete analyses using metric and dimension NAMES from the "
+        "lists above. Do not include knowledge that is not grounded in those lists.\n\n"
         "Output schema (use exactly these keys):\n"
         '{"kind": "analysis", "metric": "<metric_name>", '
         '"secondary_metric": "<metric_name>|null", '
@@ -171,7 +209,9 @@ def build_prompt(
         '"dimension": "<dimension_name>|null", '
         '"period": "<relative_period_token>|null"}\n'
         "OR\n"
-        '{"kind": "message", "text": "<short helpful reply>"}\n'
+        '{"kind": "guidance", "text": "<short analytics-only guidance>"}\n'
+        "OR\n"
+        '{"kind": "out_of_scope"}\n'
         f"{conversation}\n"
         f"{context_block}\n"
         f"Question: {question}"
@@ -236,9 +276,15 @@ def _validate(data: dict, layer: SemanticLayer) -> NLResolution | None:
     """Coerce raw model JSON into a safe :class:`NLResolution`, or ``None`` if unusable."""
 
     kind = str(data.get("kind") or "").lower()
-    if kind == "message":
+    if kind == "out_of_scope" or kind == "message":
+        # ``message`` is the legacy open-ended response type. Treat it as out of scope so an
+        # older or non-compliant model can never turn Insyte into a general-purpose chatbot.
+        return NLResolution("out_of_scope")
+    if kind == "guidance":
         text = str(data.get("text") or "").strip()
-        return NLResolution("message", text=text or "I can help you analyse your data.")
+        if text and _mentions_semantic_object(text, layer):
+            return NLResolution("guidance", text=text)
+        return NLResolution("out_of_scope")
 
     # Treat anything else as an analysis attempt; the metric must be real.
     raw_metric = str(data.get("metric") or "").strip()
@@ -364,6 +410,60 @@ def _metric_words(name: str, label: str) -> set[str]:
     }
     singulars = {word[:-1] for word in words if word.endswith("s") and len(word) > 3}
     return words | singulars
+
+
+def is_analytics_question(
+    question: str, layer: SemanticLayer, *, has_context: bool = False
+) -> bool:
+    """Conservatively decide whether free-form text belongs in the analytics resolver.
+
+    Deterministically parsed metric questions never need this gate. This protects only the
+    open-ended AI fallback, where failing closed is preferable to answering unrelated prompts.
+    """
+
+    if _mentions_semantic_object(question, layer) or _ANALYTICS_CUES.search(question):
+        return True
+    return bool(has_context and _CONTEXT_FOLLOW_UP.search(question))
+
+
+def builtin_conversation_reply(question: str) -> str | None:
+    """Return a safe fixed reply for greetings and capability questions."""
+
+    match = _GREETING.fullmatch(question)
+    if match:
+        greeting = match.group(1).lower()
+        opening = greeting.capitalize() if greeting.startswith("good ") else "Hi"
+        return (
+            f"{opening}! I'm Insyte, your data analyst. Ask me about metrics, trends, "
+            "comparisons, segments, forecasts, or why something changed."
+        )
+    if _CAPABILITY_QUESTION.fullmatch(question):
+        return CAPABILITIES_MESSAGE
+    return None
+
+
+def _mentions_semantic_object(text: str, layer: SemanticLayer) -> bool:
+    question_words = _words(text)
+    if not question_words:
+        return False
+    semantic_words: set[str] = set()
+    for name, metric in layer.metrics.items():
+        semantic_words.update(_words(f"{name} {metric.label} {metric.source_table}"))
+    for name, dimension in layer.dimensions.items():
+        semantic_words.update(_words(f"{name} {dimension.label or ''} {dimension.source}"))
+    for name, entity in layer.entities.items():
+        semantic_words.update(
+            _words(f"{name} {entity.table} {entity.primary_key} {entity.time_column or ''}")
+        )
+    semantic_words.update(_words(" ".join(layer.aliases)))
+    semantic_words.difference_update(_SCOPE_STOP_WORDS)
+    return bool(question_words & semantic_words)
+
+
+def _words(text: str) -> set[str]:
+    words = {word for word in re.split(r"[^a-z0-9]+", text.lower()) if len(word) > 2}
+    words.update(word[:-1] for word in list(words) if word.endswith("s") and len(word) > 3)
+    return words
 
 
 def _qualify_table(table: str) -> str:
