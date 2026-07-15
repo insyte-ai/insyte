@@ -161,7 +161,7 @@ Everything below can be run either as `uv run <cmd>` or, with the venv activated
 ```bash
 insyte --version                # verify the active executable/package version
 insyte --help                   # every command
-insyte init                     # connect → scan → profile → generate → validate → MCP install
+insyte init                     # connect → scan → profile → generate → validate → questions → MCP
 insyte status                   # active project summary
 insyte doctor                   # environment + config health checks
 insyte studio                   # browser workspace at http://127.0.0.1:3838 (localhost only)
@@ -447,7 +447,7 @@ create a second query path and do not store credentials.
 Guided initialization runs the metadata stages in dependency order:
 
 ```text
-connect -> scan -> profile -> semantic generate -> semantic validate -> MCP install
+connect -> scan -> profile -> semantic generate -> semantic validate -> questions -> MCP install
 ```
 
 `metadata/repository.py` hashes table and column shape into `schema_fingerprint`. A successful
@@ -466,6 +466,14 @@ labels, expressions, source fields, aliases, and non-PII profile values. `nl/llm
 only the top candidates to Claude/Codex, but validates returned IDs against the **complete**
 `SemanticLayer`. Retrieval grants no query capability and cannot create a metric, dimension,
 table, column, join, value, or SQL expression.
+
+After semantic validation, guided init asks the selected local Claude/Codex CLI for up to four
+Studio starter questions. The model receives metric and dimension IDs, labels, and whether each
+metric supports time analysis; it receives no rows or credentials. Each response is limited to
+10 words and is persisted in `semantic.yaml` only after exact metric/dimension IDs, mode
+capabilities, wording vocabulary, and duplicate checks pass. Invalid output is discarded and
+existing questions are preserved. `insyte semantic questions --backend claude|codex` regenerates
+them explicitly.
 
 `semantic/repository.py` caches the parsed YAML by modification time and size. Every load returns
 a deep copy, and external file edits invalidate the cache, so the optimization cannot turn an

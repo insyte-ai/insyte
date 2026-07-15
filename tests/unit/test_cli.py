@@ -10,6 +10,7 @@ from typer.testing import CliRunner
 from insyte import __version__
 from insyte.cli.app import app
 from insyte.config import loader, paths
+from insyte.config.models import AIClient
 
 runner = CliRunner()
 
@@ -58,6 +59,7 @@ def test_guided_setup_profiles_before_generating_semantics(
     from insyte.cli import (
         connect_command,
         init_command,
+        mcp_command,
         profile_command,
         scan_command,
         semantic_command,
@@ -69,10 +71,22 @@ def test_guided_setup_profiles_before_generating_semantics(
     monkeypatch.setattr(profile_command, "profile", lambda **kwargs: calls.append("profile"))
     monkeypatch.setattr(semantic_command, "generate", lambda **kwargs: calls.append("generate"))
     monkeypatch.setattr(semantic_command, "validate", lambda **kwargs: calls.append("validate"))
+    monkeypatch.setattr(semantic_command, "questions", lambda **kwargs: calls.append("questions"))
+    monkeypatch.setattr(
+        mcp_command, "install_client", lambda *args, **kwargs: calls.append("mcp")
+    )
 
-    init_command._run_guided_setup([])
+    init_command._run_guided_setup([AIClient.codex])
 
-    assert calls == ["connect", "scan", "profile", "generate", "validate"]
+    assert calls == [
+        "connect",
+        "scan",
+        "profile",
+        "generate",
+        "validate",
+        "questions",
+        "mcp",
+    ]
 
 
 def test_init_stores_db_url_outside_config(isolated_home: Path) -> None:

@@ -9,6 +9,7 @@ from rich.table import Table
 from insyte.cli._project import resolve_config
 from insyte.config import paths
 from insyte.metadata.repository import MetadataRepository
+from insyte.nl.llm import available_backends, resolve_starter_questions
 from insyte.semantic.generator import generate_semantic
 from insyte.semantic.repository import SemanticRepository
 from insyte.semantic.validator import SchemaIndex, validate_semantic
@@ -20,6 +21,45 @@ semantic_app = typer.Typer(
     no_args_is_help=True,
     add_completion=False,
 )
+
+
+@semantic_app.command("questions")
+def questions(
+    project: str | None = typer.Option(None, "--project", "-p", help="Project to update."),
+    backend: str = typer.Option("auto", "--backend", help="claude, codex, auto, or off."),
+) -> None:
+    """Generate concise, schema-grounded Studio starter questions with a local AI CLI."""
+
+    config = resolve_config(project)
+    repo = SemanticRepository(paths.semantic_path(config.project.name))
+    layer = repo.load()
+    if not layer.metrics:
+        console.print(
+            "[yellow]No metrics available.[/yellow] "
+            "Run [bold]insyte semantic generate[/bold]."
+        )
+        raise typer.Exit(1)
+
+    generated = []
+    used_backend = ""
+    for candidate in available_backends(backend):
+        generated = resolve_starter_questions(layer, candidate)
+        if generated:
+            used_backend = candidate.name
+            break
+    if not generated:
+        console.print(
+            "[yellow]No valid starter questions were generated.[/yellow] "
+            "Existing questions were preserved."
+        )
+        raise typer.Exit(0)
+
+    layer.starter_questions = generated
+    repo.save(layer)
+    console.print(
+        f"Added [green]{len(generated)}[/green] grounded starter questions with "
+        f"[bold]{used_backend}[/bold]."
+    )
 
 
 @semantic_app.command("generate")

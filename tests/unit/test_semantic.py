@@ -11,6 +11,7 @@ from insyte.semantic.models import (
     MetricStatus,
     SemanticAlias,
     SemanticLayer,
+    StarterQuestion,
 )
 from insyte.semantic.repository import SemanticRepository
 
@@ -71,6 +72,14 @@ def test_round_trip(tmp_path: Path) -> None:
                 target="m", confidence=0.83, evidence=["metric:m"]
             )
         },
+        starter_questions=[
+            StarterQuestion(
+                question="How is business volume trending monthly?",
+                metric="m",
+                mode="timeseries",
+                generated_by="codex",
+            )
+        ],
     )
     repo = SemanticRepository(path)
     repo.save(layer)
@@ -78,6 +87,7 @@ def test_round_trip(tmp_path: Path) -> None:
     assert reloaded.metrics["m"].expression == "COUNT(*)"
     assert reloaded.dimensions["d"].source == "t.col"
     assert reloaded.aliases["business volume"].evidence == ["metric:m"]
+    assert reloaded.starter_questions[0].generated_by == "codex"
 
 
 def test_repository_cache_returns_defensive_copies_and_detects_file_edits(tmp_path: Path) -> None:

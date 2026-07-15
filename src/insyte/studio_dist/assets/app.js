@@ -184,19 +184,20 @@
   function suggestions() {
     const m = state.metrics;
     if (!m || !m.metrics || !m.metrics.length) return [];
+    const generated = (m.starter_questions || []).map((item) => item.question).filter(Boolean);
+    if (generated.length) return generated.slice(0, 4);
     const pick = (arr, prefs) => {
       for (const p of prefs) { const h = arr.find((x) => (x.name || "").toLowerCase().includes(p)); if (h) return h; }
       return arr[0];
     };
     const metric = pick(m.metrics, ["grand_total", "total_amount", "revenue", "sales", "order_count", "amount"]);
-    const ml = (metric.label || metric.name.replace(/_/g, " ")).toLowerCase();
-    const out = ["What is the " + ml + " last month?", "Monthly " + ml + " trend"];
+    const ml = String(metric.label || metric.name).toLowerCase();
+    const out = ["Monthly " + ml];
     const dims = m.dimensions || [];
     if (dims.length) {
       const d = pick(dims, ["city", "category", "payment_method", "brand", "type", "status"]);
-      const dl = (d.label || d.name.replace(/_/g, " ")).toLowerCase();
-      out.splice(1, 0, ml + " by " + dl);
-      out.push("What is the expected " + ml + " this year?");
+      const dl = String(d.label || d.name).toLowerCase();
+      out.push(ml + " by " + dl);
     }
     return out;
   }

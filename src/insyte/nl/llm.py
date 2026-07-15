@@ -28,7 +28,8 @@ from typing import TYPE_CHECKING, TypeVar
 from insyte.analytics.models import TimeGrain
 from insyte.nl.periods import RELATIVE_PERIODS
 from insyte.semantic.catalog import SemanticCatalog
-from insyte.semantic.models import SemanticLayer
+from insyte.semantic.models import SemanticLayer, StarterQuestion
+from insyte.semantic.questions import QUESTION_VOCABULARY, validate_generated_questions
 from insyte.tui.intent import AnalysisMode
 
 if TYPE_CHECKING:
@@ -137,6 +138,49 @@ def detect_backend(preference: str = "auto") -> Backend | None:
 
     backends = available_backends(preference)
     return backends[0] if backends else None
+
+
+def resolve_starter_questions(
+    layer: SemanticLayer, backend: Backend, *, timeout: float | None = None
+) -> list[StarterQuestion]:
+    """Generate concise project prompts and reject every ungrounded model response."""
+
+    metrics = [
+        {
+            "id": name,
+            "label": metric.label,
+            "supports_time": bool(metric.time_column),
+        }
+        for name, metric in sorted(layer.metrics.items())
+    ]
+    dimensions = [
+        {"id": name, "label": dimension.label or name}
+        for name, dimension in sorted(layer.dimensions.items())
+    ]
+    prompt = (
+        "Create exactly four concise starter questions for a business analytics UI. "
+        "Prefer 7-8 words; never exceed 10 words. Use only the exact metric and dimension "
+        "IDs supplied below. Do not invent concepts, filters, values, or periods beyond common "
+        "relative periods. Include a varied useful set. A segment question requires one exact "
+        "dimension. Timeseries, forecast, and investigation require supports_time=true. "
+        "Apart from metric and dimension label words, use only these connecting words: "
+        f"{', '.join(sorted(QUESTION_VOCABULARY))}. "
+        "Return only one JSON object: "
+        '{"questions":[{"question":"... ?","metric":"exact_id",'
+        '"mode":"aggregate|timeseries|segment|forecast|investigation",'
+        '"dimension":"exact_id or null"}]}.\n'
+        f"Metrics: {json.dumps(metrics, ensure_ascii=False)}\n"
+        f"Dimensions: {json.dumps(dimensions, ensure_ascii=False)}"
+    )
+    out = _run(backend, prompt, timeout or _TIMEOUT_SECONDS)
+    if out is None:
+        return []
+    objects = _all_json_objects(out)
+    data = next((obj for obj in reversed(objects) if "questions" in obj), None)
+    if data is None:
+        logger.warning("starter_questions_no_json", extra={"backend": backend.name})
+        return []
+    return validate_generated_questions(data, layer, generated_by=backend.name)
 
 
 def build_prompt(

@@ -84,6 +84,16 @@ def validate_semantic(layer: SemanticLayer, index: SchemaIndex) -> list[Semantic
                     "warning", f"entity.{name}", f"primary key '{entity.primary_key}' not found"
                 )
             )
+    for position, question in enumerate(layer.starter_questions):
+        target = f"starter_question.{position}"
+        if question.metric not in layer.metrics:
+            issues.append(
+                SemanticIssue("error", target, f"unknown metric '{question.metric}'")
+            )
+        if question.dimension and question.dimension not in layer.dimensions:
+            issues.append(
+                SemanticIssue("error", target, f"unknown dimension '{question.dimension}'")
+            )
     return issues
 
 

@@ -20,6 +20,7 @@ def list_metrics(services: ProjectServices = Depends(get_services)) -> dict:
                 "label": m.label,
                 "expression": m.expression,
                 "source_table": m.source_table,
+                "time_column": m.time_column,
                 "status": m.status.value,
                 "format": m.format.value,
                 "confidence": m.confidence,
@@ -29,6 +30,9 @@ def list_metrics(services: ProjectServices = Depends(get_services)) -> dict:
         "dimensions": [
             {"name": name, "source": d.source, "type": d.type}
             for name, d in sorted(layer.dimensions.items())
+        ],
+        "starter_questions": [
+            question.model_dump(mode="json") for question in layer.starter_questions
         ],
     }
 

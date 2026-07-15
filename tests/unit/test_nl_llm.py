@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 from types import SimpleNamespace
 
@@ -18,6 +19,7 @@ from insyte.nl.llm import (
     detect_backend,
     is_analytics_question,
     resolve,
+    resolve_starter_questions,
 )
 from insyte.semantic.models import Dimension, Metric, MetricFormat, SemanticLayer
 from insyte.tui.intent import AnalysisMode
@@ -99,6 +101,51 @@ def test_extract_json_handles_braces_in_strings() -> None:
 
 def test_extract_json_returns_none_when_absent() -> None:
     assert _extract_json("no json here") is None
+
+
+def test_starter_questions_are_short_and_grounded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output = json.dumps(
+        {
+            "questions": [
+                {
+                    "question": "Which city contributes most to order count?",
+                    "metric": "order_count",
+                    "mode": "segment",
+                    "dimension": "city",
+                },
+                {
+                    "question": "How is order count trending monthly?",
+                    "metric": "order_count",
+                    "mode": "timeseries",
+                    "dimension": None,
+                },
+                {
+                    "question": "What drives imaginary profit growth this quarter?",
+                    "metric": "imaginary_profit",
+                    "mode": "investigation",
+                    "dimension": None,
+                },
+                {
+                    "question": (
+                        "What is the order count expected to become by the end of this year?"
+                    ),
+                    "metric": "order_count",
+                    "mode": "forecast",
+                    "dimension": None,
+                },
+            ]
+        }
+    )
+    monkeypatch.setattr(subprocess, "run", _fake_run(output))
+
+    questions = resolve_starter_questions(_layer(), Backend("codex", ["codex"]))
+
+    assert [item.question for item in questions] == [
+        "Which city contributes most to order count?",
+        "How is order count trending monthly?",
+    ]
 
 
 # ---- validation --------------------------------------------------------------------------

@@ -95,8 +95,9 @@ insyte init
 1. Enter your **read-only database URL** (stored once in a `0600` file — never in config,
    never logged, never sent to an AI).
 2. Pick your **AI tool** — Claude Code, Codex, or none.
-3. Insyte then **connects, scans and profiles the schema, generates and validates metrics, and
-   wires up your AI tool** — no scripts, no environment variables.
+3. Insyte then **connects, scans and profiles the schema, generates and validates metrics,
+   creates concise schema-grounded starter questions, and wires up your AI tool** — no scripts,
+   no environment variables.
 
 Then use it:
 
@@ -131,13 +132,14 @@ or `insyte mcp install codex`.)
 
 | Command | What it does |
 |---|---|
-| `insyte init` | Guided setup: DB URL + AI tool → connect, scan, profile, generate, validate, MCP |
+| `insyte init` | Guided setup: DB URL + AI tool → connect, scan, profile, generate, validate, questions, MCP |
 | `insyte scan` / `insyte profile` | Refresh structural metadata / bounded safe column profiles |
 | `insyte studio` | Browser workspace (localhost only) |
 | `insyte chat` | Terminal UI |
 | `insyte analyze <metric> --by <dimension>` | A single analysis from the CLI |
 | `insyte metrics` | List the metrics Insyte generated |
 | `insyte semantic generate` | Regenerate suggested metrics, dimensions, entities, and safe aliases from scanned metadata |
+| `insyte semantic questions` | Regenerate short Studio starter questions with the selected local AI CLI |
 | `insyte semantic validate` | Verify every semantic object against the latest scanned schema |
 | `insyte status` / `insyte doctor` | Project state / health checks |
 

@@ -537,6 +537,8 @@ def _pick(items: list[str], preferred: tuple[str, ...]) -> str:
 
 
 def _suggestions(layer: SemanticLayer) -> list[str]:
+    if layer.starter_questions:
+        return [item.question for item in layer.starter_questions]
     metric_names = list(layer.metrics)
     if not metric_names:
         return []

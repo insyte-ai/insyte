@@ -76,6 +76,18 @@ class SemanticAlias(BaseModel):
     status: MetricStatus = MetricStatus.suggested
 
 
+class StarterQuestion(BaseModel):
+    """A short AI-written prompt grounded in existing semantic objects."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    question: str
+    metric: str
+    mode: str
+    dimension: str | None = None
+    generated_by: str = ""
+
+
 class SemanticLayer(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
@@ -83,6 +95,7 @@ class SemanticLayer(BaseModel):
     metrics: dict[str, Metric] = Field(default_factory=dict)
     dimensions: dict[str, Dimension] = Field(default_factory=dict)
     aliases: dict[str, SemanticAlias] = Field(default_factory=dict)
+    starter_questions: list[StarterQuestion] = Field(default_factory=list)
 
     def is_empty(self) -> bool:
         return not (self.entities or self.metrics or self.dimensions or self.aliases)

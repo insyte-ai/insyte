@@ -256,6 +256,14 @@ def _run_guided_setup(ai_clients: list[AIClient]) -> None:
     _step("Profiling safe samples", lambda: profile_command.profile(project=None))
     if _step("Generating metrics", lambda: semantic_command.generate(project=None)):
         _step("Validating generated semantics", lambda: semantic_command.validate(project=None))
+        if ai_clients:
+            _step(
+                "Generating grounded starter questions",
+                lambda: semantic_command.questions(
+                    project=None,
+                    backend=ai_clients[0].value if len(ai_clients) == 1 else "auto",
+                ),
+            )
     for client in ai_clients:
         _step(
             f"Connecting {client.value.capitalize()}",

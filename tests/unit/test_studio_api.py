@@ -28,6 +28,8 @@ from insyte.metadata.models import (
     TableKind,
 )
 from insyte.metadata.repository import MetadataRepository
+from insyte.semantic.models import StarterQuestion
+from insyte.semantic.repository import SemanticRepository
 from insyte.services.project_service import ProjectService
 from insyte.studio.app import create_studio_app
 
@@ -62,6 +64,18 @@ def _setup_project(name: str = "demo") -> None:
     )
     repo.dispose()
     shutil.copy(_FIXTURE_SEMANTIC, paths.semantic_path(name))
+    semantic_repo = SemanticRepository(paths.semantic_path(name))
+    layer = semantic_repo.load()
+    layer.starter_questions = [
+        StarterQuestion(
+            question="Which city contributes most to completed revenue?",
+            metric="completed_revenue",
+            mode="segment",
+            dimension="city",
+            generated_by="codex",
+        )
+    ]
+    semantic_repo.save(layer)
 
 
 class FakeConnector:
@@ -226,7 +240,11 @@ def test_schema_and_metrics(client: TestClient) -> None:
     schema = client.get("/api/schema").json()
     assert schema["table_count"] == 1
     metrics = client.get("/api/metrics").json()
-    assert any(m["name"] == "completed_revenue" for m in metrics["metrics"])
+    completed = next(m for m in metrics["metrics"] if m["name"] == "completed_revenue")
+    assert completed["time_column"] == "orders.completed_at"
+    assert metrics["starter_questions"][0]["question"] == (
+        "Which city contributes most to completed revenue?"
+    )
 
 
 def test_conversation_and_analysis_flow(client: TestClient) -> None:
@@ -422,6 +440,8 @@ def test_spa_assets_served(client: TestClient) -> None:
     assert "* 50" in js.text
     assert "niceGrowthLimit" in js.text
     assert 'class: "g-scale-axis"' in js.text
+    assert "m.starter_questions" in js.text
+    assert "generated.slice(0, 4)" in js.text
     assert "renderInvestigationsPage" in js.text
     assert "report-mode-btn" in js.text
     assert "exportMarkdown" in js.text
