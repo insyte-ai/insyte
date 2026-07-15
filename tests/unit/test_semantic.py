@@ -80,6 +80,18 @@ def test_round_trip(tmp_path: Path) -> None:
     assert reloaded.aliases["business volume"].evidence == ["metric:m"]
 
 
+def test_repository_cache_returns_defensive_copies_and_detects_file_edits(tmp_path: Path) -> None:
+    path = tmp_path / "semantic.yaml"
+    path.write_text(_YAML)
+    repo = SemanticRepository(path)
+    first = repo.load()
+    first.metrics.clear()
+    assert "completed_revenue" in repo.load().metrics
+
+    path.write_text(_YAML.replace("Completed revenue", "Net completed revenue"))
+    assert repo.load().metrics["completed_revenue"].label == "Net completed revenue"
+
+
 def test_dimension_table_property() -> None:
     assert Dimension(source="cities.name").table == "cities"
     assert Dimension(source="public.cities.name").table == "public.cities"

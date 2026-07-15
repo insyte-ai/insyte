@@ -8,10 +8,13 @@ coexist untouched.
 
 from __future__ import annotations
 
+import hashlib
+import json
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 
-from sqlalchemy import create_engine, delete, select
+from sqlalchemy import create_engine, delete, select, text
 from sqlalchemy.orm import Session
 
 from insyte.logging_config import get_logger
@@ -31,6 +34,7 @@ from insyte.metadata.models import (
     ConversationRecord,
     IndexInfo,
     IndexRecord,
+    MetadataStateRecord,
     PiiClassificationRecord,
     ProfileResult,
     QueryHistoryRecord,
@@ -43,6 +47,7 @@ from insyte.metadata.models import (
     ScanRun,
     ScanSummary,
     SchemaRecord,
+    SearchDocumentRecord,
     SecurityEventRecord,
     SyncJobRecord,
     SyncState,
@@ -72,9 +77,57 @@ class MetadataRepository:
         db_path.parent.mkdir(parents=True, exist_ok=True)
         self._engine = create_engine(f"sqlite:///{db_path}")
         Base.metadata.create_all(self._engine)
+        self._backfill_metadata_state()
+        self._ensure_search_index()
 
     def dispose(self) -> None:
         self._engine.dispose()
+
+    def _backfill_metadata_state(self) -> None:
+        """Adopt pre-fingerprint databases without discarding their valid profiles."""
+
+        with Session(self._engine) as session, session.begin():
+            if session.get(MetadataStateRecord, "schema_fingerprint") is not None:
+                return
+            tables = list(
+                session.execute(
+                    select(TableRecord).order_by(TableRecord.schema_name, TableRecord.name)
+                ).scalars()
+            )
+            if not tables:
+                return
+            payload = []
+            for table in tables:
+                columns = list(
+                    session.execute(
+                        select(ColumnRecord)
+                        .where(ColumnRecord.table_id == table.id)
+                        .order_by(ColumnRecord.ordinal)
+                    ).scalars()
+                )
+                payload.append(
+                    {
+                        "schema": table.schema_name,
+                        "name": table.name,
+                        "kind": table.kind,
+                        "columns": [
+                            {
+                                "name": column.name,
+                                "type": column.data_type,
+                                "nullable": column.nullable,
+                                "primary": column.is_primary_key,
+                                "unique": column.is_unique,
+                            }
+                            for column in columns
+                        ],
+                    }
+                )
+            fingerprint = _fingerprint_payload(payload)
+            session.add(MetadataStateRecord(key="schema_fingerprint", value=fingerprint))
+            if session.execute(select(ColumnProfileRecord.id).limit(1)).first() is not None:
+                session.add(
+                    MetadataStateRecord(key="profile_schema_fingerprint", value=fingerprint)
+                )
 
     # -- writing -----------------------------------------------------------------------------
 
@@ -83,7 +136,13 @@ class MetadataRepository:
     ) -> ScanSummary:
         """Replace structural metadata with a fresh scan and record the run."""
 
+        fingerprint = _scan_fingerprint(result)
         with Session(self._engine) as session, session.begin():
+            previous = session.get(MetadataStateRecord, "schema_fingerprint")
+            if previous is not None and previous.value != fingerprint:
+                session.execute(delete(PiiClassificationRecord))
+                session.execute(delete(ColumnProfileRecord))
+                session.execute(delete(TableProfileRecord))
             for record in _STRUCTURAL_RECORDS:
                 session.execute(delete(record))
 
@@ -91,6 +150,8 @@ class MetadataRepository:
             for table in result.tables:
                 self._insert_table(session, table, schema_ids[table.schema])
             self._insert_relationships(session, result)
+            self._replace_search_documents(session, result)
+            session.merge(MetadataStateRecord(key="schema_fingerprint", value=fingerprint))
 
             view_count = sum(1 for t in result.tables if t.kind is TableKind.view)
             column_count = sum(len(t.columns) for t in result.tables)
@@ -113,6 +174,107 @@ class MetadataRepository:
             extra={"tables": summary.table_count, "relationships": summary.relationship_count},
         )
         return summary
+
+    def _ensure_search_index(self) -> None:
+        """Create the optional FTS5 index; LIKE search remains the portability fallback."""
+
+        try:
+            with self._engine.begin() as conn:
+                conn.exec_driver_sql(
+                    "CREATE VIRTUAL TABLE IF NOT EXISTS search_documents_fts "
+                    "USING fts5(title, content, content='search_documents', content_rowid='id')"
+                )
+        except Exception:  # noqa: BLE001 - some SQLite builds omit FTS5
+            logger.info("metadata_fts_unavailable")
+
+    @staticmethod
+    def _replace_search_documents(session: Session, result: ScanResult) -> None:
+        session.execute(delete(SearchDocumentRecord))
+        for table in result.tables:
+            relationship_terms: list[str] = []
+            for rel in result.relationships:
+                if rel.source_schema == table.schema and rel.source_table == table.name:
+                    relationship_terms.append(f"joins {rel.target_schema}.{rel.target_table}")
+                if rel.target_schema == table.schema and rel.target_table == table.name:
+                    relationship_terms.append(f"joined from {rel.source_schema}.{rel.source_table}")
+            qualified = table.qualified_name
+            session.add(
+                SearchDocumentRecord(
+                    object_type="table",
+                    object_id=qualified,
+                    title=f"{qualified} {table.name.replace('_', ' ')}",
+                    content=" ".join(
+                        filter(
+                            None,
+                            [
+                                table.comment,
+                                table.category.value,
+                                *relationship_terms,
+                                *(column.name.replace("_", " ") for column in table.columns),
+                            ],
+                        )
+                    ),
+                    payload={"kind": table.kind.value, "category": table.category.value},
+                )
+            )
+            for column in table.columns:
+                session.add(
+                    SearchDocumentRecord(
+                        object_type="column",
+                        object_id=f"{qualified}.{column.name}",
+                        title=f"{column.name} {column.name.replace('_', ' ')} {qualified}",
+                        content=" ".join(filter(None, [column.comment, column.data_type])),
+                        payload={"table": qualified, "column": column.name},
+                    )
+                )
+        session.flush()
+        try:
+            session.execute(
+                text("INSERT INTO search_documents_fts(search_documents_fts) VALUES('rebuild')")
+            )
+        except Exception:  # noqa: BLE001 - FTS is optional
+            logger.info("metadata_fts_rebuild_skipped")
+
+    def search_documents(self, query: str, limit: int = 20) -> list[dict]:
+        """Rank scanned metadata with FTS5, falling back to portable LIKE matching."""
+
+        terms = re.findall(r"[a-z0-9_]+", query.lower())
+        if not terms:
+            return []
+        fts_query = " OR ".join(f'"{term}"' for term in terms)
+        sql = text(
+            "SELECT d.object_type, d.object_id, d.title, d.payload "
+            "FROM search_documents_fts f "
+            "JOIN search_documents d ON d.id = f.rowid "
+            "WHERE search_documents_fts MATCH :query ORDER BY bm25(search_documents_fts) "
+            "LIMIT :limit"
+        )
+        with Session(self._engine) as session:
+            try:
+                rows = session.execute(sql, {"query": fts_query, "limit": limit}).mappings()
+                found = [dict(row) for row in rows]
+                if found:
+                    return found
+            except Exception:  # noqa: BLE001 - FTS is an optional optimization
+                session.rollback()
+            pattern = f"%{'%'.join(terms)}%"
+            records = session.execute(
+                select(SearchDocumentRecord)
+                .where(
+                    (SearchDocumentRecord.title.ilike(pattern))
+                    | (SearchDocumentRecord.content.ilike(pattern))
+                )
+                .limit(limit)
+            ).scalars()
+            return [
+                {
+                    "object_type": record.object_type,
+                    "object_id": record.object_id,
+                    "title": record.title,
+                    "payload": record.payload,
+                }
+                for record in records
+            ]
 
     @staticmethod
     def _insert_schemas(session: Session, result: ScanResult) -> dict[str, int]:
@@ -246,6 +408,56 @@ class MetadataRepository:
                 incoming=[_relationship_info(r) for r in incoming],
             )
 
+    def list_table_details(self, limit: int | None = None) -> list[TableDetail]:
+        """Load all table details in four bounded queries instead of one query per table."""
+
+        with Session(self._engine) as session:
+            table_stmt = select(TableRecord).order_by(TableRecord.schema_name, TableRecord.name)
+            if limit is not None:
+                table_stmt = table_stmt.limit(limit)
+            tables = list(session.execute(table_stmt).scalars())
+            if not tables:
+                return []
+            ids = [table.id for table in tables]
+            columns = list(
+                session.execute(
+                    select(ColumnRecord)
+                    .where(ColumnRecord.table_id.in_(ids))
+                    .order_by(ColumnRecord.table_id, ColumnRecord.ordinal)
+                ).scalars()
+            )
+            indexes = list(
+                session.execute(select(IndexRecord).where(IndexRecord.table_id.in_(ids))).scalars()
+            )
+            relationships = list(session.execute(select(RelationshipRecord)).scalars())
+
+        columns_by_table: dict[int, list[ColumnInfo]] = {}
+        for column in columns:
+            columns_by_table.setdefault(column.table_id, []).append(_column_info(column))
+        indexes_by_table: dict[int, list[IndexInfo]] = {}
+        for index in indexes:
+            indexes_by_table.setdefault(index.table_id, []).append(_index_info(index))
+        return [
+            TableDetail(
+                summary=_table_summary(table),
+                columns=columns_by_table.get(table.id, []),
+                indexes=indexes_by_table.get(table.id, []),
+                outgoing=[
+                    _relationship_info(relationship)
+                    for relationship in relationships
+                    if relationship.source_schema == table.schema_name
+                    and relationship.source_table == table.name
+                ],
+                incoming=[
+                    _relationship_info(relationship)
+                    for relationship in relationships
+                    if relationship.target_schema == table.schema_name
+                    and relationship.target_table == table.name
+                ],
+            )
+            for table in tables
+        ]
+
     def list_relationships(self) -> list[RelationshipInfo]:
         with Session(self._engine) as session:
             records = session.execute(
@@ -350,10 +562,22 @@ class MetadataRepository:
                             method="profile",
                         )
                     )
+            current = session.get(MetadataStateRecord, "schema_fingerprint")
+            if current is not None:
+                session.merge(
+                    MetadataStateRecord(key="profile_schema_fingerprint", value=current.value)
+                )
 
     def has_profiles(self) -> bool:
         with Session(self._engine) as session:
-            return session.execute(select(ColumnProfileRecord.id).limit(1)).first() is not None
+            schema = session.get(MetadataStateRecord, "schema_fingerprint")
+            profile = session.get(MetadataStateRecord, "profile_schema_fingerprint")
+            return (
+                schema is not None
+                and profile is not None
+                and schema.value == profile.value
+                and session.execute(select(ColumnProfileRecord.id).limit(1)).first() is not None
+            )
 
     def list_column_profiles(self, table: str | None = None) -> list[ColumnProfile]:
         stmt = select(ColumnProfileRecord).order_by(
@@ -794,6 +1018,35 @@ def _security_event_entry(record: SecurityEventRecord) -> SecurityEventEntry:
         violations=list(record.violations),
         created_at=record.created_at,
     )
+
+
+def _scan_fingerprint(result: ScanResult) -> str:
+    """Hash only schema facts that affect profiles and semantic definitions."""
+
+    payload = [
+        {
+            "schema": table.schema,
+            "name": table.name,
+            "kind": table.kind.value,
+            "columns": [
+                {
+                    "name": column.name,
+                    "type": column.data_type,
+                    "nullable": column.nullable,
+                    "primary": column.is_primary_key,
+                    "unique": column.is_unique,
+                }
+                for column in table.columns
+            ],
+        }
+        for table in sorted(result.tables, key=lambda item: item.qualified_name)
+    ]
+    return _fingerprint_payload(payload)
+
+
+def _fingerprint_payload(payload: list[dict]) -> str:
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def _run_to_summary(run: ScanRun) -> ScanSummary:

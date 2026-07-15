@@ -11,8 +11,10 @@ from insyte.nl.llm import (
     Backend,
     _extract_report_json,
     _validate_report,
+    build_report_prompt,
     resolve_report,
 )
+from insyte.studio.schemas import DetailedReport
 
 _GOOD = {
     "executive_summary": "Revenue is concentrated in Mumbai.",
@@ -22,6 +24,61 @@ _GOOD = {
     "recommendations": [{"action": "Diversify", "horizon": "short", "priority": "high"}],
     "confidence_overall": "high",
 }
+
+
+def _prompt_schema() -> dict:
+    prompt = build_report_prompt({"metric": {"name": "total_amount"}})
+    schema_text = prompt.split("## Exact output schema", 1)[1].split("```json", 1)[1]
+    return json.loads(schema_text.split("```", 1)[0])
+
+
+def test_report_skill_preserves_exact_response_contract() -> None:
+    schema = _prompt_schema()
+    expected = set(DetailedReport.model_fields) - {"generated_by"}
+    assert set(schema) == expected
+    assert set(schema["key_insights"][0]) == {
+        "title",
+        "detail",
+        "evidence",
+        "confidence",
+        "limitations",
+        "alternative_explanation",
+    }
+    assert set(schema["data_quality"][0]) == {"issue", "severity", "affected", "impact"}
+    assert set(schema["root_cause"]) == {
+        "what_changed",
+        "when",
+        "dimension",
+        "likely_cause",
+        "confidence",
+        "evidence",
+    }
+    assert set(schema["business_impact"]) == {"narrative", "financial_note"}
+    assert set(schema["forecast"]) == {
+        "expected",
+        "best_case",
+        "worst_case",
+        "assumptions",
+        "method",
+    }
+    assert set(schema["risks"][0]) == {"risk", "likelihood", "mitigation"}
+    assert set(schema["recommendations"][0]) == {
+        "action",
+        "horizon",
+        "priority",
+        "expected_impact",
+        "est_roi",
+    }
+
+
+def test_report_skill_is_compact_and_keeps_grounding_guards() -> None:
+    prompt = build_report_prompt({"sentinel": 123})
+    persona = prompt.split("## Analysis payload (JSON)", 1)[0]
+    assert len(persona.split()) < 2_000
+    assert "Every cited figure, metric, segment, and period must appear in the payload" in persona
+    assert "Correlation does not establish causation" in persona
+    assert "Give numerical `est_roi` only when both cost and benefit inputs are supplied" in persona
+    assert '"sentinel": 123' in prompt
 
 
 def test_extract_report_json_prefers_report_among_banners() -> None:

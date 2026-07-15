@@ -8,10 +8,9 @@ core feature, not an afterthought.
 - **Read-only by design.** Insyte is intended to be used with a dedicated read-only database
   account. From Milestone 2 onward every query runs inside a `READ ONLY` transaction with
   `statement_timeout`, `lock_timeout`, and `idle_in_transaction_session_timeout` applied.
-- **Credentials never leave your machine.** The database URL is read from an environment
-  variable (or, later, your OS keychain) only when a connection is actually needed. It is
-  **never** written to `config.yaml`, **never** logged, and **never** returned to an AI
-  client or MCP tool.
+- **Credentials never leave your machine.** The database URL is resolved from the configured
+  environment variable or a project-local mode-`0600` secret file only when needed. It is never
+  written to `config.yaml`, logged, returned by an MCP tool, or included in an AI prompt.
 - **AI clients cannot bypass the query engine.** Claude Code, Codex, and any other MCP client
   can only call validated tools. They cannot obtain the connection URL or execute raw,
   unvalidated SQL. SQL validation, permission checks, row limits, timeouts, PII masking, and
@@ -20,6 +19,10 @@ core feature, not an afterthought.
   metadata are routing hints only. They must point to existing metrics or dimensions, carry
   evidence, and pass semantic validation before use. Low-confidence or ambiguous aliases fail
   closed rather than silently choosing a target.
+- **Semantic retrieval is non-authoritative.** Local FTS and deterministic catalog scoring only
+  shortlist existing metrics and dimensions. Every model-selected ID is validated against the
+  complete semantic layer before query generation; retrieval cannot create schema objects,
+  values, joins, or SQL.
 - **Redacted, structured logs.** All logging passes through a redaction filter that masks
   connection URLs and sensitive fields (passwords, tokens, API keys).
 
@@ -38,6 +41,9 @@ deliberately narrow:
 - **The AI only writes prose.** It receives numbers and returns commentary. It does not author
   SQL, choose what is queried, or produce any chart — every figure and chart in the report is
   computed deterministically by Insyte.
+- **The report contract is validated.** The compact analyst prompt contains one canonical JSON
+  schema, and model output is parsed into typed report models. Unsupported sections remain empty;
+  malformed report output degrades without opening another query path.
 - **It leaves your machine.** The payload goes to your local `claude`/`codex` CLI, which sends
   it to that provider (Anthropic / OpenAI) under your own account. A one-time notice makes this
   explicit before the first report is generated.

@@ -21,8 +21,9 @@ from insyte.analytics.models import (
 from insyte.analytics.periods import periods_for_grain
 from insyte.analytics.report import MAX_REPORT_ROWS
 from insyte.exceptions import InsyteError, QueryValidationError
-from insyte.metadata.models import ColumnProfile
+from insyte.metadata.models import ColumnProfile, RelationshipInfo
 from insyte.nl.llm import Backend, resolve_report
+from insyte.semantic.catalog import MetricCapability, SemanticCatalog
 from insyte.semantic.models import MetricFormat, SemanticLayer
 from insyte.services.analysis_service import AnalysisService
 from insyte.studio.schemas import (
@@ -96,17 +97,25 @@ class InvestigationService:
         freshness: DataFreshness,
         suggestions: list[str],
         profiles: list[ColumnProfile] | None = None,
+        relationships: list[RelationshipInfo] | None = None,
     ) -> None:
         self._analysis = analysis
         self._layer = layer
         self._freshness = freshness
         self._suggestions = suggestions
         self._profiles = profiles or []
+        self._catalog = SemanticCatalog(
+            layer, profiles=self._profiles, relationships=relationships or []
+        )
 
     def plan(self, question: str, intent: Intent) -> InvestigationPlan:
         metric = intent.metric
         assert metric is not None
-        dimension = intent.dimension or _pick_dimension(list(self._layer.dimensions))
+        capability = self._catalog.capability(metric)
+        safe_dimensions = list(capability.dimensions) if capability else []
+        dimension = intent.dimension or _pick_dimension(safe_dimensions)
+        if dimension is None and not self._profiles:
+            dimension = _pick_dimension(list(self._layer.dimensions))
         metric_def = self._layer.metrics.get(metric)
         has_time = bool(metric_def and metric_def.time_column)
         explicit_periods = parse_period_pair(question)
@@ -117,6 +126,7 @@ class InvestigationService:
         elif has_time:
             period_label = "current month vs previous month"
 
+        coverage_limitation = _coverage_limitation(capability, current, baseline)
         steps = [
             InvestigationStep(
                 id="trend",
@@ -139,7 +149,9 @@ class InvestigationService:
                 kind="comparison",
                 status="pending" if has_time else "skipped",
                 limitation=(
-                    ""
+                    coverage_limitation
+                    if has_time and coverage_limitation
+                    else ""
                     if has_time
                     else "This metric has no time column, so period comparison was skipped."
                 ),
@@ -241,10 +253,14 @@ class InvestigationService:
                         step.limitation = "No dimension is available for segment breakdown."
                         limitations.append(step.limitation)
                     else:
-                        current, baseline = _explicit_periods(plan)
-                        if current is not None and baseline is not None:
+                        segment_current, segment_baseline = _explicit_periods(plan)
+                        if segment_current is not None and segment_baseline is not None:
                             domain = self._analysis.segment_compare(
-                                plan.metric, plan.dimension, current, baseline, limit=10
+                                plan.metric,
+                                plan.dimension,
+                                segment_current,
+                                segment_baseline,
+                                limit=10,
                             )
                         else:
                             domain = self._analysis.segment(plan.metric, plan.dimension, limit=10)
@@ -409,6 +425,36 @@ def _pick_dimension(dimensions: list[str]) -> str | None:
             if token in dimension.lower():
                 return dimension
     return dimensions[0]
+
+
+def _coverage_limitation(
+    capability: MetricCapability | None,
+    current: Period | None,
+    baseline: Period | None,
+) -> str:
+    """Flag explicit periods outside profiled coverage without claiming sampled bounds are exact."""
+
+    if capability is None or (capability.data_start is None and capability.data_end is None):
+        return ""
+    requested = [period for period in (current, baseline) if period is not None]
+    if not requested:
+        return ""
+    start = capability.data_start.date() if capability.data_start else None
+    end = capability.data_end.date() if capability.data_end else None
+    outside = any(
+        (start is not None and period.end.date() < start)
+        or (end is not None and period.start.date() > end)
+        for period in requested
+    )
+    if not outside:
+        return ""
+    bounds = " to ".join(
+        value.isoformat() for value in (start, end) if value is not None
+    )
+    return (
+        f"The requested comparison is outside the profiled time-column coverage ({bounds}); "
+        "results require a data-coverage check."
+    )
 
 
 def _quality_finding(freshness: DataFreshness) -> str:

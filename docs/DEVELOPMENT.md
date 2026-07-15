@@ -25,8 +25,9 @@ Codex, etc.) can pick it up cold and be productive.
 11. [Worked example: the Detailed Report feature](#11-worked-example-the-detailed-report-feature)
 12. [Worked example: Semantic aliases without hallucination](#12-worked-example-semantic-aliases-without-hallucination)
 13. [Worked example: Context, investigations, and saved workspace](#13-worked-example-context-investigations-and-saved-workspace)
-14. [Conventions & gotchas](#14-conventions--gotchas)
-15. [Publishing](#15-publishing)
+14. [Schema retrieval and metric capabilities](#14-schema-retrieval-and-metric-capabilities)
+15. [Conventions & gotchas](#15-conventions--gotchas)
+16. [Publishing](#16-publishing)
 
 ---
 
@@ -69,6 +70,7 @@ Insyte is layered. A question flows down through the domain and back up as a typ
 ```
 Question (natural language)
   │
+  ▼  semantic/catalog.py ─ exact/alias/token ranking; shortlist only known objects
   ▼  nl/ ─ deterministic parser (tui/intent.py) first; AI CLI (nl/llm.py) as fallback
 Intent (JSON: metric, secondary_metric, mode, dimension, grain, period) ← validated against layer
   │
@@ -87,8 +89,8 @@ Key domain packages:
 |---|---|
 | `config/` | Pydantic config models, YAML load/save, `~/.insyte` paths, secret (DB URL) resolution — never stores the URL. |
 | `connectors/` | Read-only DB connections (`postgres.py`, `duckdb.py`); `read_only_transaction()` with timeouts; `factory.py`. |
-| `metadata/` | `scanner` (schema), `profiler` (sample column stats), `pii_detector`, `classifier` (fact/dim), `relationship_detector` (FKs), `repository` (SQLite metadata store). |
-| `semantic/` | Semantic-layer models (metrics / dimensions / entities / aliases), `generator` (auto-generate from schema), `validator`, `repository` (`semantic.yaml`). |
+| `metadata/` | `scanner` (schema), `profiler` (sample column stats), `pii_detector`, `classifier` (fact/dim), `relationship_detector` (FKs), `repository` (SQLite metadata, fingerprints, and FTS catalog). |
+| `semantic/` | Semantic-layer models (metrics / dimensions / entities / aliases), `generator`, `validator`, `catalog` (candidate retrieval and metric capabilities), `repository` (`semantic.yaml`). |
 | `query/` | `generator` (SQL + join BFS), `validator` (SQLGlot), `cost_guard` (limits), `executor` (read-only run). |
 | `analytics/` | `engine` (aggregate/timeseries/segment/opportunity/compare), `charts` (Indian ₹/Cr/L formatting), `forecast`, `segmentation`, `comparison`, `report` (detailed-report grounding). |
 | `nl/` | `llm` (shell out to `claude`/`codex`; NL→intent and detailed-report prose), `periods`. The deterministic parser is `tui/intent.py`. |
@@ -157,9 +159,9 @@ Everything below can be run either as `uv run <cmd>` or, with the venv activated
 ## 7. Running Insyte locally
 
 ```bash
-insyte --version                # 0.2.7
+insyte --version                # verify the active executable/package version
 insyte --help                   # every command
-insyte init                     # guided: read-only DB URL + AI tool → connect, scan, metrics, MCP
+insyte init                     # connect → scan → profile → generate → validate → MCP install
 insyte status                   # active project summary
 insyte doctor                   # environment + config health checks
 insyte studio                   # browser workspace at http://127.0.0.1:3838 (localhost only)
@@ -272,7 +274,10 @@ Work **domain-up**, one self-contained step at a time, keeping the gate green af
 A concrete trace of the process above (opt-in AI analyst report over a result):
 
 1. **Persona + schemas** — `nl/report_skill.md` (the analyst prompt/contract) and
-   `DetailedReport` models in `studio/schemas.py`; opt-in `MessageRequest.detailed` flag.
+   `DetailedReport` models in `studio/schemas.py`; opt-in `MessageRequest.detailed` flag. The
+   prompt is precedence-driven and compact, with one canonical JSON schema instead of repeated
+   field instructions. `test_report_llm.py` parses that embedded schema and verifies every
+   top-level and nested field against the Studio response contract.
 2. **Pure grounding** — `analytics/report.py`: `build_report_context()` assembles the
    masked, ≤200-row payload; `data_quality_flags()` from the profiler/PII detector;
    `forecast_bands()` best/expected/worst from real monthly actuals. **No DB, no `studio`
@@ -287,6 +292,11 @@ A concrete trace of the process above (opt-in AI analyst report over a result):
    button, and the report dashboard (charts derived only from the real result).
 6. **Docs + release** — README/SECURITY document the data boundary; `release.yml` verifies the
    wheel bundles `report_skill.md`.
+
+Optimising the persona must not change the response shape. Keep grounding, analytical-frame,
+quality, materiality, causal, forecast, recommendation, ROI, confidence, severity, item-limit,
+and empty-field rules represented once; update the Pydantic models and schema-contract tests
+together for any intentional response change.
 
 The invariant that keeps an ambitious feature honest: **data & charts are deterministic
 (Insyte), narrative is the AI's** — the model never authors SQL or invents a number.
@@ -432,7 +442,59 @@ Studio keeps conversations useful without widening the safety boundary:
 Saved investigations reuse the already persisted structured `AnalysisResult` JSON. They do not
 create a second query path and do not store credentials.
 
-## 14. Conventions & gotchas
+## 14. Schema retrieval and metric capabilities
+
+Guided initialization runs the metadata stages in dependency order:
+
+```text
+connect -> scan -> profile -> semantic generate -> semantic validate -> MCP install
+```
+
+`metadata/repository.py` hashes table and column shape into `schema_fingerprint`. A successful
+profile stores the fingerprint it was built from. When a later scan changes the shape, table,
+column, and PII profiles are deleted atomically so semantic generation and investigations cannot
+consume stale statistics. Existing project databases are adopted on first open, and new tables
+are created through SQLAlchemy's additive `create_all()` path.
+
+The repository also builds `search_documents` plus an optional SQLite FTS5 index from scanned
+table names, column names, data types, comments, categories, and relationship neighbors.
+`SchemaService.search()` uses BM25-ranked FTS results and falls back to portable substring search
+when the local SQLite build has no FTS5 support or an old project has not been rescanned.
+
+`semantic/catalog.py` performs deterministic hybrid retrieval over metric/dimension names,
+labels, expressions, source fields, aliases, and non-PII profile values. `nl/llm.resolve()` sends
+only the top candidates to Claude/Codex, but validates returned IDs against the **complete**
+`SemanticLayer`. Retrieval grants no query capability and cannot create a metric, dimension,
+table, column, join, value, or SQL expression.
+
+`semantic/repository.py` caches the parsed YAML by modification time and size. Every load returns
+a deep copy, and external file edits invalidate the cache, so the optimization cannot turn an
+unsaved mutation or stale file into shared process state.
+
+The same catalog builds a metric capability record:
+
+```text
+metric -> source table -> time column/profiled range
+       -> directly or FK-neighbor dimensions -> cardinality/PII filtering
+```
+
+Investigation planning prefers reachable low/medium-cardinality dimensions, excludes profiled
+PII and unique/high-cardinality fields, and flags explicit periods outside sampled time coverage.
+Profile bounds are evidence, not an authoritative row-count claim, so they produce a limitation
+rather than silently skipping or changing a requested comparison.
+
+A separate vector database is intentionally not part of this path. For a local catalog of tens
+to thousands of objects, exact matching plus FTS is faster to operate and easier to audit.
+Embeddings may later be added as an optional candidate reranker, but their output must pass the
+same exact-ID validation and ambiguity checks.
+
+Relevant tests:
+
+- `tests/unit/test_metadata_repository.py` - fingerprints, profile invalidation, FTS documents.
+- `tests/unit/test_semantic_catalog.py` - alias retrieval, narrowing, joins, cardinality, coverage.
+- `tests/unit/test_nl_llm.py` - final fail-closed intent validation.
+
+## 15. Conventions & gotchas
 
 - **Type hints** on all public functions; code must pass `mypy src`.
 - **Custom exceptions** from `insyte.exceptions` (`InsyteError` subclasses) — don't raise bare
@@ -460,10 +522,13 @@ create a second query path and do not store credentials.
   (`[tool.hatch.build.targets.wheel]`). Static assets are served with ETag revalidation; a
   browser may need a hard refresh after edits. Run `node --check
   src/insyte/studio_dist/assets/app.js` after non-trivial JS edits.
+- **Verify the executable before UI testing.** `which insyte` may resolve to a global, Conda, or
+  pipx package instead of the editable workspace. Use `.venv/bin/insyte` when validating local
+  init, report-prompt, or bundled Studio changes.
 - **macOS filesystem is case-insensitive** — project name/dir matching is case-insensitive on
   purpose; keep it that way.
 
-## 15. Publishing
+## 16. Publishing
 
 Full checklist in [PUBLISHING.md](PUBLISHING.md). Short version:
 

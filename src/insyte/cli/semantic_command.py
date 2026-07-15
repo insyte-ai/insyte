@@ -37,11 +37,7 @@ def generate(
             )
             raise typer.Exit(1)
 
-        details = [
-            detail
-            for summary in metadata.list_tables()
-            if (detail := metadata.get_table(summary.schema, summary.name)) is not None
-        ]
+        details = metadata.list_table_details()
         profiles = {p.qualified_column: p for p in metadata.list_column_profiles()}
 
         semantic_repo = SemanticRepository(paths.semantic_path(config.project.name))

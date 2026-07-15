@@ -50,13 +50,18 @@ insyte init
    (`~/.insyte/projects/<name>/.database_url`) — never in `config.yaml`, never logged, never
    sent to an AI. (Advanced: choose "environment variable" instead, or pass `--db-url`.)
 2. **AI tool** — Claude Code, Codex, both, or none.
-3. Insyte then **connects, scans the schema, generates metrics, and installs the MCP server**
-   into your chosen tool — no scripts, no environment variables.
+3. Insyte then **connects, scans the schema, profiles bounded safe samples, generates and
+   validates metrics, and installs the MCP server** into your chosen tool — no scripts, no
+   environment variables.
 
 Metric generation also creates safe semantic aliases from scanned metadata. For example, if
 your schema has `sales_orders.order_ts`, Insyte can generate `sales_order_count` and understand
 "order count" as that metric. Aliases only point at existing metrics/dimensions and include
 evidence; Insyte does not invent tables, columns, values, or SQL.
+
+The scan is fingerprinted. If a later scan changes a table or column definition, profiles from
+the old shape are invalidated instead of being silently reused. Schema search uses a local
+SQLite full-text index; no external vector database or metadata service is required.
 
 ## 4. Ask questions
 
@@ -130,9 +135,25 @@ refuses to read them — from the CLI, the TUI, and AI clients alike.
 ## Troubleshooting
 
 ```bash
+which insyte         # confirms which installation is being executed
+insyte --version     # compare with the version you installed or built
 insyte doctor        # checks Python, packages, config, and whether the DB URL is set
 insyte status        # shows the active project and last scan (no DB connection)
 ```
+
+When testing unreleased workspace changes, activate the repository virtual environment or invoke
+its executable explicitly:
+
+```bash
+cd /path/to/insyte
+.venv/bin/pip install -e .
+.venv/bin/insyte --version
+.venv/bin/insyte studio
+```
+
+If `which insyte` points to another Python, pipx, Conda, or system installation, that command may
+serve an older bundled Studio UI and run an older initialization flow even when the repository
+contains newer code.
 
 Logs are under `~/.insyte/projects/<name>/logs/` as structured JSON, with credentials and PII
 redacted.

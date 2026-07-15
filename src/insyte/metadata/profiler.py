@@ -46,16 +46,14 @@ class Profiler:
         self._profiling = profiling
 
     def profile(self) -> ProfileResult:
-        tables = self._metadata.list_tables()[: self._profiling.maximum_tables]
+        tables = self._metadata.list_table_details(self._profiling.maximum_tables)
         table_profiles: list[TableProfile] = []
         column_profiles: list[ColumnProfile] = []
 
         logger.info("profile_started", extra={"tables": len(tables)})
         with self._connector.read_only_transaction() as conn:
-            for summary in tables:
-                detail = self._metadata.get_table(summary.schema, summary.name)
-                if detail is None:
-                    continue
+            for detail in tables:
+                summary = detail.summary
                 column_names = [c.name for c in detail.columns][
                     : self._profiling.maximum_columns_per_table
                 ]

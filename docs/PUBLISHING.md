@@ -9,8 +9,8 @@ insyte studio       # (or `insyte chat`) — ready to use
 ```
 
 > **Onboarding is `insyte init`** (implemented). It creates the project, stores the URL,
-> then runs connect → scan → generate metrics → MCP install. No separate `insyte setup`
-> command and no `setup.sh` are needed.
+> then runs connect → scan → profile → semantic generate → semantic validate → MCP install.
+> No separate `insyte setup` command and no `setup.sh` are needed.
 
 Package name: **`insyte`** · command: **`insyte`** · Python **>= 3.11**.
 
@@ -33,8 +33,9 @@ insyte init
 1. **Checks the environment** (Python version, that install succeeded).
 2. **Asks for the database URL** → validates it's read-only-friendly, stores it once in a
    `0600` file (`~/.insyte/projects/<name>/.database_url`) — never in `config.yaml`, never logged.
-3. **Validates the connection** (`connect`), then **scans the schema** (`scan`) and
-   **generates metrics** (`semantic generate`).
+3. **Validates the connection** (`connect`), then **scans the schema** (`scan`), profiles safe
+   bounded samples (`profile`), and **generates and validates metrics** (`semantic generate`,
+   `semantic validate`).
 4. **Detects the user's AI tool** (`claude` / `codex` on PATH) and **installs the MCP server**
    into whichever is present (asks only if both). Works with no AI tool too — Studio's
    deterministic parser still answers metric questions.
@@ -59,7 +60,8 @@ un-bypassable.
 
 - Interactive: prompt name → **read-only DB URL** (stored `0600`) → **AI tool** (claude / codex /
   both / none).
-- After creating the project it runs `connect → scan → semantic generate → mcp install` for the
+- After creating the project it runs
+  `connect → scan → profile → semantic generate → semantic validate → mcp install` for the
   chosen tool (`_run_guided_setup`), then prints the "ready" panel.
 - SSL defaults to `prefer` (least-friction for local + remote); each step is fault-tolerant
   (a failed connect stops the rest with a clear hint; setup never crashes `init`).
@@ -117,7 +119,7 @@ Rewrite `README.md` around the new one-line install. Sections:
 3. **Install & set up**:
    ```bash
    pip install insyte
-   insyte init           # asks for DB URL + AI tool, does connect/scan/metrics/MCP
+   insyte init           # connect/scan/profile/generate/validate/MCP
    insyte studio         # or: insyte chat
    ```
 4. **Requirements** — Python 3.11+, a PostgreSQL database, optionally the `claude` or `codex`
@@ -194,7 +196,8 @@ onboarding once more.
 ## 9. Acceptance criteria (definition of done)
 
 - [ ] `pip install insyte` in a clean venv pulls all runtime deps; `insyte --version` works.
-- [ ] `insyte init` runs the full guided flow (URL → connect → scan → metrics → MCP) with
+- [ ] `insyte init` runs the full guided flow
+      (URL → connect → scan → profile → generate → validate → MCP) with
       **no shell scripts and no environment variables**.
 - [ ] `insyte studio` serves the SPA (with the logo) and answers free-form questions via the
       user's Claude/Codex; `insyte chat` works too.

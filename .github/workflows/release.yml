@@ -25,5 +25,6 @@ jobs:
         run: |
           python -m zipfile -l dist/*.whl | grep studio_dist/assets/app.js
           python -m zipfile -l dist/*.whl | grep studio_dist/assets/logo-dark.png
+          python -m zipfile -l dist/*.whl | grep nl/report_skill.md
       - name: Publish to PyPI
         run: uv publish

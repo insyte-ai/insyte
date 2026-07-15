@@ -25,6 +25,11 @@ Two things are always true:
   aliases from scanned tables, columns, metrics, and dimensions. "order count" can resolve to a
   real `sales_order_count` metric when the `sales_orders` table exists, but aliases only point
   at existing semantic objects and carry evidence.
+- **Profile-aware schema retrieval** — guided setup safely profiles bounded samples and
+  fingerprints the scanned schema. SQLite full-text search ranks structural metadata, while a
+  deterministic semantic catalog ranks metrics, dimensions, aliases, and safe profile evidence.
+  Only relevant known objects are offered to the AI resolver; its answer is still validated
+  against the complete semantic layer.
 - **Investigation Mode Lite** — ask broader questions like "why did total amount change?" or
   explicit comparisons like "Why did order count drop from February 2026 to March 2026?" and
   Studio runs a safe, multi-step investigation: trend, period-aware comparison, segment
@@ -90,8 +95,8 @@ insyte init
 1. Enter your **read-only database URL** (stored once in a `0600` file — never in config,
    never logged, never sent to an AI).
 2. Pick your **AI tool** — Claude Code, Codex, or none.
-3. Insyte then **connects, scans the schema, generates metrics, and wires up your AI tool** —
-   no scripts, no environment variables.
+3. Insyte then **connects, scans and profiles the schema, generates and validates metrics, and
+   wires up your AI tool** — no scripts, no environment variables.
 
 Then use it:
 
@@ -126,12 +131,14 @@ or `insyte mcp install codex`.)
 
 | Command | What it does |
 |---|---|
-| `insyte init` | Guided setup: DB URL + AI tool → connect, scan, metrics, MCP |
+| `insyte init` | Guided setup: DB URL + AI tool → connect, scan, profile, generate, validate, MCP |
+| `insyte scan` / `insyte profile` | Refresh structural metadata / bounded safe column profiles |
 | `insyte studio` | Browser workspace (localhost only) |
 | `insyte chat` | Terminal UI |
 | `insyte analyze <metric> --by <dimension>` | A single analysis from the CLI |
 | `insyte metrics` | List the metrics Insyte generated |
 | `insyte semantic generate` | Regenerate suggested metrics, dimensions, entities, and safe aliases from scanned metadata |
+| `insyte semantic validate` | Verify every semantic object against the latest scanned schema |
 | `insyte status` / `insyte doctor` | Project state / health checks |
 
 Everything lives under `~/.insyte/projects/<name>/` (config, stored URL, scanned schema,

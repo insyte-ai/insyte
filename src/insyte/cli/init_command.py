@@ -221,7 +221,13 @@ def init(
 def _run_guided_setup(ai_clients: list[AIClient]) -> None:
     """Connect, scan, generate metrics, and wire up the chosen AI tool. Never crashes init."""
 
-    from insyte.cli import connect_command, mcp_command, scan_command, semantic_command
+    from insyte.cli import (
+        connect_command,
+        mcp_command,
+        profile_command,
+        scan_command,
+        semantic_command,
+    )
 
     console.print("\n[bold]Setting up…[/bold]")
 
@@ -247,7 +253,9 @@ def _run_guided_setup(ai_clients: list[AIClient]) -> None:
         return
     if not _step("Scanning the schema", lambda: scan_command.scan(project=None)):
         return
-    _step("Generating metrics", lambda: semantic_command.generate(project=None))
+    _step("Profiling safe samples", lambda: profile_command.profile(project=None))
+    if _step("Generating metrics", lambda: semantic_command.generate(project=None)):
+        _step("Validating generated semantics", lambda: semantic_command.validate(project=None))
     for client in ai_clients:
         _step(
             f"Connecting {client.value.capitalize()}",

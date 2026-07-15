@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 from insyte import __version__
@@ -49,6 +50,29 @@ def test_init_non_interactive_creates_project(isolated_home: Path) -> None:
     assert paths.get_active_project() == "demo"
     # The generated config must not contain a credential.
     assert "postgresql://" not in paths.config_path("demo").read_text(encoding="utf-8")
+
+
+def test_guided_setup_profiles_before_generating_semantics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from insyte.cli import (
+        connect_command,
+        init_command,
+        profile_command,
+        scan_command,
+        semantic_command,
+    )
+
+    calls: list[str] = []
+    monkeypatch.setattr(connect_command, "connect", lambda **kwargs: calls.append("connect"))
+    monkeypatch.setattr(scan_command, "scan", lambda **kwargs: calls.append("scan"))
+    monkeypatch.setattr(profile_command, "profile", lambda **kwargs: calls.append("profile"))
+    monkeypatch.setattr(semantic_command, "generate", lambda **kwargs: calls.append("generate"))
+    monkeypatch.setattr(semantic_command, "validate", lambda **kwargs: calls.append("validate"))
+
+    init_command._run_guided_setup([])
+
+    assert calls == ["connect", "scan", "profile", "generate", "validate"]
 
 
 def test_init_stores_db_url_outside_config(isolated_home: Path) -> None:

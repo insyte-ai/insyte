@@ -327,6 +327,29 @@ class ScanRun(Base):
     relationship_count: Mapped[int] = mapped_column(default=0)
 
 
+class MetadataStateRecord(Base):
+    """Small versioned values that connect independently refreshed metadata."""
+
+    __tablename__ = "metadata_state"
+
+    key: Mapped[str] = mapped_column(primary_key=True)
+    value: Mapped[str]
+
+
+class SearchDocumentRecord(Base):
+    """A safe local search document derived only from scanned metadata."""
+
+    __tablename__ = "search_documents"
+    __table_args__ = (UniqueConstraint("object_type", "object_id"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    object_type: Mapped[str]
+    object_id: Mapped[str]
+    title: Mapped[str]
+    content: Mapped[str]
+    payload: Mapped[dict] = mapped_column(JSON, default=dict)
+
+
 class QueryHistoryRecord(Base):
     """One audited query attempt. Survives re-scans (not a structural table)."""
 

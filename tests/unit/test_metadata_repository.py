@@ -8,6 +8,9 @@ from pathlib import Path
 import pytest
 
 from insyte.metadata.models import (
+    CardinalityCategory,
+    ColumnProfile,
+    ProfileResult,
     Relationship,
     RelationshipKind,
     ScannedColumn,
@@ -17,6 +20,7 @@ from insyte.metadata.models import (
     ScanResult,
     TableCategory,
     TableKind,
+    TableProfile,
 )
 from insyte.metadata.repository import MetadataRepository
 
@@ -114,6 +118,16 @@ def test_get_table_detail(repository: MetadataRepository) -> None:
     assert customers.indexes[0].columns == ["id"]
 
 
+def test_list_table_details_bulk_loads_same_metadata(repository: MetadataRepository) -> None:
+    _save(repository)
+    details = repository.list_table_details()
+    assert [detail.summary.name for detail in details] == ["customers", "orders"]
+    assert [column.name for column in details[0].columns] == ["id", "city"]
+    assert len(details[0].incoming) == 1
+    assert len(details[1].outgoing) == 1
+    assert [detail.summary.name for detail in repository.list_table_details(1)] == ["customers"]
+
+
 def test_get_missing_table(repository: MetadataRepository) -> None:
     _save(repository)
     assert repository.get_table(None, "ghost") is None
@@ -139,6 +153,50 @@ def test_rescan_replaces_structural_data(repository: MetadataRepository) -> None
     repository.save_scan(smaller, started_at=now, finished_at=now)
     assert [t.name for t in repository.list_tables()] == ["products"]
     assert repository.list_relationships() == []
+
+
+def test_rescan_invalidates_profiles_only_when_schema_changes(
+    repository: MetadataRepository,
+) -> None:
+    _save(repository)
+    repository.save_profiles(
+        ProfileResult(
+            table_profiles=[TableProfile("public", "customers", 1000, 10, 2)],
+            column_profiles=[
+                ColumnProfile(
+                    "public",
+                    "customers",
+                    "city",
+                    0.0,
+                    2,
+                    0.8,
+                    CardinalityCategory.low,
+                    10,
+                )
+            ],
+        )
+    )
+    assert repository.has_profiles()
+
+    _save(repository)
+    assert repository.has_profiles()
+
+    changed = _sample_result()
+    changed.tables[0].columns.append(ScannedColumn("country", 2, "text", nullable=True))
+    now = datetime.now(UTC)
+    repository.save_scan(changed, started_at=now, finished_at=now)
+    assert not repository.has_profiles()
+    assert repository.list_column_profiles() == []
+
+
+def test_search_documents_uses_comments_and_column_names(
+    repository: MetadataRepository,
+) -> None:
+    _save(repository)
+    comments = repository.search_documents("home")
+    assert comments and comments[0]["object_id"] == "public.customers.city"
+    columns = repository.search_documents("customer id")
+    assert any(item["object_id"] == "public.orders.customer_id" for item in columns)
 
 
 def test_latest_scan(repository: MetadataRepository) -> None:

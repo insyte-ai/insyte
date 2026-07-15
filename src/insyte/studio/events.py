@@ -29,6 +29,7 @@ from insyte.nl.llm import (
     resolve,
 )
 from insyte.nl.periods import period_from_token
+from insyte.semantic.catalog import SemanticCatalog
 from insyte.semantic.models import Metric, MetricFormat, SemanticLayer
 from insyte.services.analysis_service import AnalysisService
 from insyte.services.schema_service import SchemaService
@@ -125,6 +126,11 @@ def stream_analysis(
         backends = available_backends(config.ai.studio_backend)
         resolution = None
         if backends:
+            catalog = SemanticCatalog(
+                layer,
+                profiles=schema.column_profiles(),
+                relationships=schema.list_relationships(),
+            )
             yield sse("ai_resolving", {"backend": backends[0].name})
             for backend in backends:
                 resolution = resolve(
@@ -133,6 +139,7 @@ def stream_analysis(
                     backend,
                     history=history,
                     context=chat_context.prompt_summary() if chat_context else None,
+                    catalog=catalog,
                 )
                 if resolution is not None:
                     break
@@ -206,6 +213,7 @@ def stream_analysis(
                 data_freshness,
                 _suggestions(layer),
                 profiles=schema.column_profiles(),
+                relationships=schema.list_relationships(),
             )
             plan = service.plan(question, intent)
             yield sse("investigation_planned", {"plan": plan.model_dump(mode="json")})

@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING, TypeVar
 
 from insyte.analytics.models import TimeGrain
 from insyte.nl.periods import RELATIVE_PERIODS
+from insyte.semantic.catalog import SemanticCatalog
 from insyte.semantic.models import SemanticLayer
 from insyte.tui.intent import AnalysisMode
 
@@ -164,11 +165,22 @@ def build_prompt(
             'follow-ups like "same period", "that metric", or "by city":\n'
             f"{context}\n"
         )
+    aliases: dict[tuple[str, str], list[str]] = {}
+    for phrase, alias in layer.aliases.items():
+        aliases.setdefault((alias.target_type, alias.target), []).append(phrase)
+
+    def _prompt_item(object_type: str, name: str, label: str) -> str:
+        known_aliases = sorted(aliases.get((object_type, name), []))
+        suffix = f"; aliases: {', '.join(known_aliases)}" if known_aliases else ""
+        return f"  - {name}: {label}{suffix}"
+
     metrics = "\n".join(
-        f"  - {name}: {m.label or name}" for name, m in sorted(layer.metrics.items())
+        _prompt_item("metric", name, metric.label or name)
+        for name, metric in sorted(layer.metrics.items())
     )
     dimensions = "\n".join(
-        f"  - {name}: {d.label or name}" for name, d in sorted(layer.dimensions.items())
+        _prompt_item("dimension", name, dimension.label or name)
+        for name, dimension in sorted(layer.dimensions.items())
     )
     grains = ", ".join(g.value for g in TimeGrain)
     periods = ", ".join(RELATIVE_PERIODS)
@@ -489,10 +501,23 @@ def resolve(
     timeout: float | None = None,
     history: list[tuple[str, str]] | None = None,
     context: str | None = None,
+    catalog: SemanticCatalog | None = None,
 ) -> NLResolution | None:
     """Run the local AI CLI to translate ``question``; return ``None`` on any failure."""
 
-    prompt = build_prompt(question, layer, now=now, history=history, context=context)
+    retrieval_text = " ".join(filter(None, [question, context or ""]))
+    prompt_layer, candidates = (catalog or SemanticCatalog(layer)).narrowed_layer(retrieval_text)
+    if candidates:
+        logger.info(
+            "nl_candidates_selected",
+            extra={
+                "candidates": [
+                    {"type": item.object_type, "name": item.name, "score": item.score}
+                    for item in candidates
+                ]
+            },
+        )
+    prompt = build_prompt(question, prompt_layer, now=now, history=history, context=context)
     out = _run(backend, prompt, timeout or _TIMEOUT_SECONDS)
     if out is None:
         return None
