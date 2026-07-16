@@ -84,11 +84,29 @@ Studio also supports:
 - **Saved investigations** — completed investigations are saved locally. Open the
   Investigations workspace from the left sidebar to review the timeline, report, linked result,
   and export Markdown/JSON.
+- **Model routes** — set `ai.intent_backend`, `ai.planner_backend`, and `ai.report_backend` to
+  `auto`, `claude`, `codex`, or `off`. Set `ai.fallback_backend` only when another model should be
+  tried before deterministic fallback.
 - **Detailed reports** — turn on the "Detailed report" tool in the composer for an analyst
   report over the computed result or investigation bundle. Only aggregated, PII-masked outputs
   are sent to your local Claude/Codex CLI; credentials and raw rows are never sent.
 - **Interactive charts** — hover points/bars for values, expand charts fullscreen, and inspect
   smoothed trend lines with readable date labels.
+
+Example `config.yaml`:
+
+```yaml
+ai:
+  studio_backend: auto
+  intent_backend: auto
+  planner_backend: auto
+  report_backend: auto
+  fallback_backend: off
+  detailed_reports: true
+```
+
+The planner can choose only trend, comparison, segment, quality, and report operations grounded
+in the current semantic catalog. It cannot create SQL, joins, filters, metrics, or dimensions.
 
 Good investigation prompts use business terms that map to generated metrics:
 

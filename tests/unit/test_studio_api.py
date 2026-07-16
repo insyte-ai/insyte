@@ -196,7 +196,10 @@ def _factory(blocked: bool = False):
 def _no_real_llm(monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep tests hermetic: never shell out to a real claude/codex CLI on the dev machine."""
 
+    from insyte.agents import planner
+
     monkeypatch.setenv("INSYTE_STUDIO_LLM", "off")
+    monkeypatch.setattr(planner, "_run", lambda *_args, **_kwargs: None)
 
 
 @pytest.fixture
@@ -258,9 +261,10 @@ def test_metric_approval_clears_confirmation_requirement(client: TestClient) -> 
 
     assert response.status_code == 200
     assert response.json()["requires_confirmation"] is False
-    assert SemanticRepository(paths.semantic_path("demo")).load().metrics[
-        "order_count"
-    ].status.value == "confirmed"
+    assert (
+        SemanticRepository(paths.semantic_path("demo")).load().metrics["order_count"].status.value
+        == "confirmed"
+    )
 
 
 def test_conversation_and_analysis_flow(client: TestClient) -> None:
@@ -348,9 +352,7 @@ def test_ambiguous_qualifier_saves_blocked_metric_proposal(
     assert result["status"] == "clarification"
     layer = SemanticRepository(paths.semantic_path("demo")).load()
     assert layer.metrics["positive_review_count"].requires_confirmation is True
-    assert layer.metrics["positive_review_count"].filters == {
-        "orders.status": ["completed"]
-    }
+    assert layer.metrics["positive_review_count"].filters == {"orders.status": ["completed"]}
 
 
 def test_investigation_question_streams_timeline(client: TestClient) -> None:
@@ -377,9 +379,7 @@ def test_investigation_uses_explicit_historical_periods(client: TestClient) -> N
     posted = client.post(
         f"/api/conversations/{conv['id']}/messages",
         json={
-            "content": (
-                "Why did payment failure rate increase from February 2026 to March 2026?"
-            )
+            "content": ("Why did payment failure rate increase from February 2026 to March 2026?")
         },
     ).json()
     result = _final_result(client.get(posted["stream_url"]).text)
@@ -390,8 +390,7 @@ def test_investigation_uses_explicit_historical_periods(client: TestClient) -> N
     assert plan["baseline_period"]["label"] == "Feb 2026"
     assert "Mar 2026" in plan["steps"][1]["title"]
     assert any(
-        "from Feb 2026 to Mar 2026" in finding
-        for finding in result["investigation"]["findings"]
+        "from Feb 2026 to Mar 2026" in finding for finding in result["investigation"]["findings"]
     )
 
 
@@ -419,9 +418,10 @@ def test_investigation_is_saved_and_routeable(client: TestClient) -> None:
         json={"title": "Failure-rate investigation"},
     ).json()
     assert renamed == {"renamed": True, "title": "Failure-rate investigation"}
-    assert client.get(f"/api/investigations/{saved[0]['id']}").json()["investigation"][
-        "title"
-    ] == "Failure-rate investigation"
+    assert (
+        client.get(f"/api/investigations/{saved[0]['id']}").json()["investigation"]["title"]
+        == "Failure-rate investigation"
+    )
 
     assert client.delete(f"/api/investigations/{saved[0]['id']}").json() == {"deleted": True}
     assert client.get("/api/investigations").json()["investigations"] == []
@@ -559,9 +559,7 @@ def test_unrecognised_question(client: TestClient) -> None:
         ("what u can do", "I analyze the connected business data."),
     ],
 )
-def test_safe_builtin_conversation(
-    client: TestClient, question: str, expected: str
-) -> None:
+def test_safe_builtin_conversation(client: TestClient, question: str, expected: str) -> None:
     conv = client.post("/api/conversations", json={}).json()
     posted = client.post(
         f"/api/conversations/{conv['id']}/messages", json={"content": question}

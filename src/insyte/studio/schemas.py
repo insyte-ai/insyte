@@ -192,6 +192,7 @@ class InvestigationPlan(BaseModel):
     current_period: InvestigationPeriod | None = None
     baseline_period: InvestigationPeriod | None = None
     steps: list[InvestigationStep] = Field(default_factory=list)
+    generated_by: str = "deterministic"
 
 
 class InvestigationResult(BaseModel):
@@ -201,6 +202,7 @@ class InvestigationResult(BaseModel):
     findings: list[str] = Field(default_factory=list)
     limitations: list[str] = Field(default_factory=list)
     next_questions: list[str] = Field(default_factory=list)
+    critic_status: str = "not_run"
 
 
 class AnalysisResult(BaseModel):

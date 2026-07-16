@@ -11,6 +11,10 @@ import re
 from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
 
+from insyte.agents.analyst import AnalystAgent
+from insyte.agents.planner import PlannerAgent
+from insyte.agents.quality import QualityAgent
+from insyte.agents.report import ReportAgent
 from insyte.analytics.models import (
     AnalysisResult as DomainAnalysisResult,
 )
@@ -108,7 +112,12 @@ class InvestigationService:
             layer, profiles=self._profiles, relationships=relationships or []
         )
 
-    def plan(self, question: str, intent: Intent) -> InvestigationPlan:
+    def plan(
+        self,
+        question: str,
+        intent: Intent,
+        planner_backends: list[Backend] | tuple[Backend, ...] | None = None,
+    ) -> InvestigationPlan:
         metric = intent.metric
         assert metric is not None
         capability = self._catalog.capability(metric)
@@ -178,7 +187,7 @@ class InvestigationService:
                 kind="report",
             ),
         ]
-        return InvestigationPlan(
+        plan = InvestigationPlan(
             question=question,
             metric=metric,
             dimension=dimension,
@@ -187,6 +196,16 @@ class InvestigationService:
             baseline_period=_period_payload(baseline),
             steps=steps,
         )
+        if planner_backends:
+            decision = PlannerAgent(self._layer, self._catalog).plan(
+                question, metric, planner_backends
+            )
+            if decision is not None:
+                plan.dimension = decision.dimension
+                by_kind = {step.kind: step for step in plan.steps}
+                plan.steps = [by_kind[operation.value] for operation in decision.operations]
+                plan.generated_by = decision.generated_by
+        return plan
 
     def run(
         self,
@@ -195,11 +214,13 @@ class InvestigationService:
         plan: InvestigationPlan,
         emit: Callable[[str, dict], str],
         detailed: bool = False,
-        report_backends: list[Backend] | None = None,
+        report_backends: list[Backend] | tuple[Backend, ...] | None = None,
     ) -> Iterator[str | AnalysisResult]:
         """Yield SSE strings while running, then yield the final Studio result."""
 
         metric_def = self._layer.metrics[plan.metric]
+        analyst = AnalystAgent(self._analysis)
+        quality = QualityAgent(self._profiles)
         fmt = metric_def.format
         findings: list[str] = []
         limitations: list[str] = []
@@ -223,7 +244,7 @@ class InvestigationService:
             yield emit("investigation_step_started", {"step": step.model_dump(mode="json")})
             try:
                 if step.kind == "trend":
-                    domain = self._analysis.timeseries(plan.metric, TimeGrain.month)
+                    domain = analyst.trend(plan.metric)
                     partial = studio_result_from_analysis(
                         f"{analysis_id}:trend", domain, fmt, self._freshness, []
                     )
@@ -237,7 +258,7 @@ class InvestigationService:
                     report_domains.append(domain)
                 elif step.kind == "comparison":
                     current, baseline = _comparison_periods(plan)
-                    comparison = self._analysis.compare(plan.metric, current, baseline)
+                    comparison = analyst.compare(plan.metric, current, baseline)
                     partial = studio_result_from_comparison(
                         f"{analysis_id}:comparison", comparison, fmt, self._freshness
                     )
@@ -255,15 +276,15 @@ class InvestigationService:
                     else:
                         segment_current, segment_baseline = _explicit_periods(plan)
                         if segment_current is not None and segment_baseline is not None:
-                            domain = self._analysis.segment_compare(
+                            domain = analyst.segment(
                                 plan.metric,
                                 plan.dimension,
-                                segment_current,
-                                segment_baseline,
+                                current=segment_current,
+                                baseline=segment_baseline,
                                 limit=10,
                             )
                         else:
-                            domain = self._analysis.segment(plan.metric, plan.dimension, limit=10)
+                            domain = analyst.segment(plan.metric, plan.dimension, limit=10)
                         partial = studio_result_from_analysis(
                             f"{analysis_id}:segment", domain, fmt, self._freshness, []
                         )
@@ -275,9 +296,15 @@ class InvestigationService:
                         query = query or partial.query
                         report_domains.append(domain)
                 elif step.kind == "quality":
+                    assessment = quality.assess(plan.metric, metric_def, self._freshness)
                     step.status = "completed"
-                    step.key_finding = _quality_finding(self._freshness)
+                    step.key_finding = assessment.summary
                     findings.append(step.key_finding)
+                    limitations.extend(
+                        issue.impact
+                        for issue in assessment.issues
+                        if issue.severity in {"warning", "critical"}
+                    )
                 elif step.kind == "report":
                     step.status = "completed"
                     step.key_finding = _final_finding(plan, findings, limitations)
@@ -315,6 +342,8 @@ class InvestigationService:
                 next_questions=next_questions,
             ),
         )
+        investigation_result = result.investigation
+        assert investigation_result is not None
         if detailed:
             backends = report_backends or []
             if backends:
@@ -330,16 +359,27 @@ class InvestigationService:
                     limitations=limitations,
                     next_questions=next_questions,
                 )
-                for backend in backends:
-                    result.report = resolve_report(payload, backend)
-                    if result.report is not None:
-                        break
+                result.report, critic_review = ReportAgent(resolver=resolve_report).generate(
+                    payload, backends
+                )
                 if result.report is not None:
+                    investigation_result.critic_status = "approved"
+                    yield emit(
+                        "report_critic_completed",
+                        {"approved": True, "unsupported_claims": []},
+                    )
                     yield emit("report_ready", {"backend": result.report.generated_by})
                 else:
+                    if critic_review is not None:
+                        investigation_result.critic_status = critic_review.action
+                        yield emit(
+                            "report_critic_completed",
+                            critic_review.model_dump(mode="json"),
+                        )
                     result.report = _detailed_report(plan, findings, limitations, next_questions)
                     result.warnings.append(
-                        "Detailed investigation report fell back to deterministic summary."
+                        "Detailed investigation report fell back to a deterministic summary "
+                        "after generation or grounding review failed."
                     )
                     yield emit("report_failed", {})
             else:
@@ -448,9 +488,7 @@ def _coverage_limitation(
     )
     if not outside:
         return ""
-    bounds = " to ".join(
-        value.isoformat() for value in (start, end) if value is not None
-    )
+    bounds = " to ".join(value.isoformat() for value in (start, end) if value is not None)
     return (
         f"The requested comparison is outside the profiled time-column coverage ({bounds}); "
         "results require a data-coverage check."

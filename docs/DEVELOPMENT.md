@@ -71,7 +71,7 @@ Insyte is layered. A question flows down through the domain and back up as a typ
 Question (natural language)
   │
   ▼  semantic/catalog.py ─ exact/alias/token ranking; shortlist only known objects
-  ▼  nl/ ─ deterministic parser (tui/intent.py) first; AI CLI (nl/llm.py) as fallback
+  ▼  nl/ ─ deterministic parser first; task router + validated AI CLI fallback
 Intent (JSON: metric, secondary_metric, mode, dimension, grain, period) ← validated against layer
   │
   ▼  query/generator.py ─ build SQL (join path via FK BFS)
@@ -93,7 +93,8 @@ Key domain packages:
 | `semantic/` | Semantic-layer models (metrics / dimensions / entities / aliases), `generator`, `validator`, `catalog` (candidate retrieval and metric capabilities), `repository` (`semantic.yaml`). |
 | `query/` | `generator` (SQL + join BFS), `validator` (SQLGlot), `cost_guard` (limits), `executor` (read-only run). |
 | `analytics/` | `engine` (aggregate/timeseries/segment/opportunity/compare), `charts` (Indian ₹/Cr/L formatting), `forecast`, `segmentation`, `comparison`, `report` (detailed-report grounding). |
-| `nl/` | `llm` (shell out to `claude`/`codex`; NL→intent and detailed-report prose), `periods`. The deterministic parser is `tui/intent.py`. |
+| `nl/` | `llm` (shell out to `claude`/`codex`; NL→intent and detailed-report prose), `router` (task-aware model selection), `periods`. The deterministic parser is `tui/intent.py`. |
+| `agents/` | Typed internal Planner, Analyst, Quality, Report, and Critic agents. They exchange strict models and invoke only approved application services. |
 | `services/` | Orchestration used by every interface: `project_service` (opens a project → a `ProjectServices` bundle), `analysis_service`, `schema_service`, `metric_service`, `conversation_service`, `history_service`, `export_service`. |
 
 Interfaces (thin, call into `services/`):
@@ -376,10 +377,9 @@ already exist in `semantic.yaml`.
 
 The same alias-aware parser is used by Studio, TUI, and MCP-facing analysis paths.
 
-### Safety rules for future AI enrichment
+### Safety rules for AI enrichment
 
-If a future `semantic enrich --backend codex|claude` command is added, it must obey these
-rules:
+`semantic enrich --backend codex|claude` obeys these rules:
 
 - send metadata only: table names, column names/types, relationships, safe profiles, existing
   metrics/dimensions/aliases;
@@ -516,7 +516,43 @@ Relevant tests:
 - `tests/unit/test_semantic_catalog.py` - alias retrieval, narrowing, joins, cardinality, coverage.
 - `tests/unit/test_nl_llm.py` - final fail-closed intent validation.
 
-## 15. Conventions & gotchas
+## 15. Model router and internal agents
+
+`nl/router.py` turns AI selection into an explicit task-level decision. `AISection` supports
+`intent_backend`, `planner_backend`, `report_backend`, and `fallback_backend`; accepted values are
+`auto`, `claude`, `codex`, and `off`. `studio_backend` remains as a compatibility default. Each
+route logs the task, requested backend, installed candidates, fallback, and whether execution is
+deterministic. Prompts, result rows, credentials, and chain-of-thought are not logged.
+
+The internal workflow has five narrow roles:
+
+1. `PlannerAgent` may select only `trend`, `comparison`, `segment`, `quality`, and `report`. Its
+   metric and dimension must exist in `SemanticCatalog`; time operations require a time column,
+   segment requires a reachable dimension, and unknown fields or extra JSON keys are rejected.
+2. `AnalystAgent` is a facade over `AnalysisService`. It exposes trend, comparison, and segment
+   calls and has no connector, credential, raw SQL, or general query method.
+3. `QualityAgent` reads persisted `ColumnProfile` and `DataFreshness` facts. It reports only
+   confirmed null/freshness issues relevant to the selected metric.
+4. `ReportAgent` invokes the configured report route with the existing bounded aggregate payload
+   and validates the response as `DetailedReport`.
+5. `CriticAgent` compares every report figure with the evidence payload. Unsupported figures block
+   the model report; investigations fall back to the deterministic structured summary and normal
+   reports surface a grounding warning.
+
+Studio emits `model_routed` and `report_critic_completed` SSE events for observable routing and
+review outcomes. If planner output is absent or invalid, `InvestigationService.plan()` retains its
+deterministic plan. If no intent backend exists, Studio returns its existing clarification path.
+No agent can widen query permissions or bypass SQLGlot validation, execution limits, PII masking,
+or audit logging.
+
+Relevant tests:
+
+- `tests/unit/test_model_router.py` - task routes, legacy compatibility, explicit fallback.
+- `tests/unit/test_agents.py` - invalid plans, critic blocking, deterministic quality evidence.
+- `tests/unit/test_investigation.py` - approved-service execution and deterministic plans.
+- `tests/unit/test_studio_api.py` - routed intent/report behavior and SSE integration.
+
+## 16. Conventions & gotchas
 
 - **Type hints** on all public functions; code must pass `mypy src`.
 - **Custom exceptions** from `insyte.exceptions` (`InsyteError` subclasses) — don't raise bare
@@ -550,7 +586,7 @@ Relevant tests:
 - **macOS filesystem is case-insensitive** — project name/dir matching is case-insensitive on
   purpose; keep it that way.
 
-## 16. Publishing
+## 17. Publishing
 
 Full checklist in [PUBLISHING.md](PUBLISHING.md). Short version:
 

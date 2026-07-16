@@ -32,6 +32,10 @@ def test_defaults_match_spec() -> None:
     assert config.privacy.telemetry is False
     assert config.privacy.persist_raw_results is False
     assert config.ai.integration == []
+    assert config.ai.intent_backend == "auto"
+    assert config.ai.report_backend == "auto"
+    assert config.ai.planner_backend == "auto"
+    assert config.ai.fallback_backend == "off"
 
 
 def test_enum_coercion_from_strings() -> None:
@@ -80,6 +84,13 @@ def test_invalid_database_type_rejected() -> None:
 def test_unknown_key_rejected() -> None:
     with pytest.raises(ValidationError):
         InsyteConfig.model_validate({"project": {"name": "demo"}, "surprise": 1})
+
+
+def test_invalid_ai_backend_rejected() -> None:
+    with pytest.raises(ValidationError):
+        InsyteConfig.model_validate(
+            {"project": {"name": "demo"}, "ai": {"planner_backend": "remote-magic"}}
+        )
 
 
 def test_default_limit_cannot_exceed_maximum() -> None:

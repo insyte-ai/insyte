@@ -57,6 +57,14 @@ Every response is structured JSON. A dangerous query passed to `insyte_run_safe_
 rejected with its violations and **never reaches the database** — identical behaviour to
 `insyte query` on the CLI.
 
+## MCP tools versus Studio agents
+
+The Month 4 model router and internal agents power Studio intent, investigation planning, and
+detailed reports. They do not add MCP permissions. MCP clients still receive only the tools
+listed above, and internal agents cannot call `insyte_run_safe_sql` or access an MCP client's
+credentials. Planner output is limited to approved analytical operations and all execution still
+passes through `AnalysisService` and the existing query safety pipeline.
+
 ## Running the server directly
 
 `insyte mcp start --project <name>` runs the stdio server (this is what the client launches for

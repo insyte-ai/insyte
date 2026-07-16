@@ -13,6 +13,7 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
+from insyte.agents.report import ReportAgent
 from insyte.analytics.charts import format_value
 from insyte.analytics.forecast import project_current_year
 from insyte.analytics.models import AnalysisKind, Period, TimeGrain
@@ -29,6 +30,7 @@ from insyte.nl.llm import (
     resolve,
 )
 from insyte.nl.periods import period_from_token
+from insyte.nl.router import ModelRouter, ModelTask
 from insyte.semantic.catalog import SemanticCatalog
 from insyte.semantic.models import Metric, MetricFormat, SemanticLayer
 from insyte.semantic.proposals import DerivedMetricProposal
@@ -83,6 +85,7 @@ def stream_analysis(
     """Yield SSE strings for an analysis and persist the final result via ``on_complete``."""
 
     yield sse("question_received", {"analysis_id": analysis_id})
+    model_router = ModelRouter(config.ai, resolver=available_backends)
     intent = parse_intent(question, layer)
     if intent.kind is IntentKind.analysis and intent.metric:
         unresolved = unresolved_terms(
@@ -134,8 +137,17 @@ def stream_analysis(
         # The deterministic parser couldn't map it — ask the user's local AI CLI to translate.
         # Try each installed CLI in turn so a failing one (e.g. an org-disabled Claude) falls
         # through to a working one (e.g. Codex).
-        backends = available_backends(config.ai.studio_backend)
+        intent_route = model_router.route(ModelTask.intent)
+        backends = intent_route.backends
         resolution = None
+        yield sse(
+            "model_routed",
+            {
+                "task": ModelTask.intent.value,
+                "backends": [backend.name for backend in backends],
+                "deterministic": intent_route.deterministic,
+            },
+        )
         if backends:
             catalog = SemanticCatalog(
                 layer,
@@ -256,9 +268,7 @@ def stream_analysis(
             status="clarification",
             suggested=_suggestions(layer),
         )
-        context = _final_context(
-            question, result, chat_context, intent, period, detailed=detailed
-        )
+        context = _final_context(question, result, chat_context, intent, period, detailed=detailed)
         result.context = context.to_dict()
         on_complete(result, context)
         yield sse("response_completed", {"result": result.model_dump(mode="json")})
@@ -280,7 +290,8 @@ def stream_analysis(
                 profiles=schema.column_profiles(),
                 relationships=schema.list_relationships(),
             )
-            plan = service.plan(question, intent)
+            planner_route = model_router.route(ModelTask.planner)
+            plan = service.plan(question, intent, planner_backends=planner_route.backends)
             yield sse("investigation_planned", {"plan": plan.model_dump(mode="json")})
             final_result: AnalysisResult | None = None
             for item in service.run(
@@ -288,7 +299,7 @@ def stream_analysis(
                 plan=plan,
                 emit=sse,
                 detailed=detailed,
-                report_backends=available_backends(config.ai.studio_backend) if detailed else [],
+                report_backends=(model_router.route(ModelTask.report).backends if detailed else []),
             ):
                 if isinstance(item, str):
                     yield item
@@ -451,11 +462,19 @@ def _augment_with_report(
 
     # Imported lazily so the base analysis path never pays for the report machinery.
     from insyte.analytics.report import build_report_context
-    from insyte.nl.llm import resolve_report
 
     if not config.ai.detailed_reports:
         return
-    backends = available_backends(config.ai.studio_backend)
+    route = ModelRouter(config.ai, resolver=available_backends).route(ModelTask.report)
+    backends = route.backends
+    yield sse(
+        "model_routed",
+        {
+            "task": ModelTask.report.value,
+            "backends": [backend.name for backend in backends],
+            "deterministic": route.deterministic,
+        },
+    )
     if not backends:
         result.warnings.append("Detailed report skipped: no local AI CLI (claude/codex) found.")
         yield sse("report_skipped", {"reason": "no_backend"})
@@ -489,16 +508,22 @@ def _augment_with_report(
         trend=series,
         now=datetime.now(UTC),
     )
-    report = None
-    for backend in backends:
-        report = resolve_report(payload, backend)
-        if report is not None:
-            break
+    report, critic_review = ReportAgent().generate(payload, backends)
     if report is None:
-        result.warnings.append("Detailed report could not be generated this time.")
+        if critic_review is not None:
+            yield sse("report_critic_completed", critic_review.model_dump(mode="json"))
+            result.warnings.append(
+                "Detailed report was blocked because its claims were not fully grounded."
+            )
+        else:
+            result.warnings.append("Detailed report could not be generated this time.")
         yield sse("report_failed", {})
         return
     result.report = report
+    yield sse(
+        "report_critic_completed",
+        {"approved": True, "unsupported_claims": [], "action": "accept"},
+    )
     yield sse("report_ready", {"backend": report.generated_by})
 
 

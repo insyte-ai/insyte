@@ -6,7 +6,7 @@ core feature, not an afterthought.
 ## Design guarantees
 
 - **Read-only by design.** Insyte is intended to be used with a dedicated read-only database
-  account. From Milestone 2 onward every query runs inside a `READ ONLY` transaction with
+  account. Every query runs inside a `READ ONLY` transaction with
   `statement_timeout`, `lock_timeout`, and `idle_in_transaction_session_timeout` applied.
 - **Credentials never leave your machine.** The database URL is resolved from the configured
   environment variable or a project-local mode-`0600` secret file only when needed. It is never
@@ -14,7 +14,7 @@ core feature, not an afterthought.
 - **AI clients cannot bypass the query engine.** Claude Code, Codex, and any other MCP client
   can only call validated tools. They cannot obtain the connection URL or execute raw,
   unvalidated SQL. SQL validation, permission checks, row limits, timeouts, PII masking, and
-  audit logging apply to every path (from Milestone 4 onward).
+  audit logging apply to every path.
 - **Semantic aliases cannot invent data.** Natural-language aliases generated from scanned
   metadata are routing hints only. They must point to existing metrics or dimensions, carry
   evidence, and pass semantic validation before use. Low-confidence or ambiguous aliases fail
@@ -23,6 +23,12 @@ core feature, not an afterthought.
   shortlist existing metrics and dimensions. Every model-selected ID is validated against the
   complete semantic layer before query generation; retrieval cannot create schema objects,
   values, joins, or SQL.
+- **Model routing does not grant capability.** Intent, planner, and report tasks may use different
+  local Claude/Codex clients, but every route has the same validated inputs and service boundary.
+  Explicit fallback selects another local client; it never bypasses deterministic validation.
+- **Agents use approved services only.** The internal planner can select only typed trend,
+  comparison, segment, quality, and report operations. The analyst calls `AnalysisService`; no
+  agent receives a connector, credential, arbitrary SQL method, or direct database access.
 - **Redacted, structured logs.** All logging passes through a redaction filter that masks
   connection URLs and sensitive fields (passwords, tokens, API keys).
 
@@ -44,6 +50,9 @@ deliberately narrow:
 - **The report contract is validated.** The compact analyst prompt contains one canonical JSON
   schema, and model output is parsed into typed report models. Unsupported sections remain empty;
   malformed report output degrades without opening another query path.
+- **Report figures are reviewed.** A deterministic critic checks every generated report figure
+  against the supplied evidence payload. Unsupported figures block the model report; an
+  investigation then uses its deterministic structured summary.
 - **It leaves your machine.** The payload goes to your local `claude`/`codex` CLI, which sends
   it to that provider (Anthropic / OpenAI) under your own account. A one-time notice makes this
   explicit before the first report is generated.
@@ -55,10 +64,11 @@ suggested metrics, dimensions, entities, and aliases. It does not send data to a
 Aliases such as `order count -> sales_order_count` are accepted only when the target exists in
 the semantic layer.
 
-If AI-assisted semantic enrichment is added later, it must remain metadata-only: table names,
-column names/types, relationships, safe profiles, and existing semantic objects. AI suggestions
-must be validated before use and must never introduce unknown tables, columns, filter values, or
-SQL.
+`insyte semantic enrich` is metadata-only: it receives table names, column names/types,
+relationships, safe profiles, and existing semantic objects. Every proposal is checked against
+the source metric, non-PII profile, and exact observed values, then stored with
+`requires_confirmation: true`. It cannot execute until approved and cannot introduce unknown
+tables, columns, filter values, joins, expressions, or SQL.
 
 ## Recommendations for operators
 

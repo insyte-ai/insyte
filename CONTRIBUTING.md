@@ -25,6 +25,9 @@ uv run ruff check src tests && uv run mypy src && uv run pytest -q
 - **Tests** via Pytest: `pytest -q`. New behaviour needs tests.
 - Keep modules small and focused; use custom exceptions (`insyte.exceptions`); never store
   secrets in code or config; never execute unvalidated SQL.
+- Keep AI changes behind typed boundaries: route tasks through `nl/router.py`, validate planner
+  output against the semantic catalog, call only approved services, and test deterministic
+  fallback plus malformed model output.
 - Dependencies are added in the milestone that first uses them — don't pull in the whole
   stack early.
 
@@ -42,5 +45,6 @@ you add or change a command.
 
 ## Security-sensitive changes
 
-Anything touching connection handling, SQL validation, logging/redaction, or credential
-resolution deserves extra care and explicit tests. See [SECURITY.md](SECURITY.md).
+Anything touching connection handling, SQL validation, model routing, agent permissions,
+report grounding, logging/redaction, or credential resolution deserves extra care and explicit
+tests. See [SECURITY.md](SECURITY.md).

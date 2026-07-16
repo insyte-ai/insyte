@@ -134,9 +134,31 @@ class AISection(_StrictModel):
     # Which local AI CLI powers Studio/TUI free-form questions: auto | claude | codex | off.
     # 'auto' uses whichever of claude/codex is installed; 'off' keeps the deterministic parser.
     studio_backend: str = "auto"
+    # Task-specific routes. ``auto`` inherits an explicit legacy studio_backend when present,
+    # otherwise it tries installed local clients in their normal order.
+    intent_backend: str = "auto"
+    report_backend: str = "auto"
+    planner_backend: str = "auto"
+    # An explicit fallback is opt-in. ``off`` means a failed task route falls back to the
+    # deterministic application path, not another model.
+    fallback_backend: str = "off"
     # Global kill-switch for opt-in detailed reports (aggregated results sent to the local AI
     # CLI for analyst commentary). The per-request toggle can only narrow this, never widen it.
     detailed_reports: bool = True
+
+    @field_validator(
+        "studio_backend",
+        "intent_backend",
+        "report_backend",
+        "planner_backend",
+        "fallback_backend",
+    )
+    @classmethod
+    def _valid_backend(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized not in {"auto", "claude", "codex", "off"}:
+            raise ValueError("AI backends must be auto, claude, codex, or off")
+        return normalized
 
 
 class InsyteConfig(_StrictModel):

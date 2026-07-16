@@ -37,6 +37,12 @@ Two things are always true:
 - **Saved investigations** — completed Studio investigations are saved locally with their
   timeline, report, original question, and linked analysis result. Reopen them from the
   Investigations workspace and export Markdown or JSON.
+- **Task-aware model routing** — intent resolution, investigation planning, and reports can use
+  different local Claude/Codex backends. Explicit fallback is opt-in; deterministic behavior
+  remains available for every task.
+- **Typed internal agents** — planner, analyst, quality, report, and critic stages exchange
+  validated models. Agents select approved operations and call `AnalysisService`; they never
+  execute model-authored SQL or receive database credentials.
 - **Detailed reports (opt-in)** — flip on "Detailed report" in Studio for an in-depth analyst
   write-up: executive summary, key insights, data-quality flags, root-cause reasoning,
   evidence/counter-evidence, best/expected/worst forecast, and prioritized recommendations, in a
@@ -59,6 +65,21 @@ writes prose — it never sees credentials, never authors SQL, and every chart i
 from real numbers. It's off by default, shows a one-time notice the first time you enable it,
 and can be turned off entirely with `ai.detailed_reports: false` in `config.yaml`.
 
+Task routes are configured independently while retaining `studio_backend` compatibility:
+
+```yaml
+ai:
+  studio_backend: auto
+  intent_backend: auto
+  planner_backend: auto
+  report_backend: auto
+  fallback_backend: off
+  detailed_reports: true
+```
+
+`auto` selects an installed local client. `off` uses the deterministic path. A failed explicit
+route tries another model only when `fallback_backend` is configured; otherwise it fails closed.
+
 ### Smart aliases without hallucination
 
 Insyte's semantic layer can understand obvious business phrasing without making up data. The
@@ -67,9 +88,10 @@ target metric already exists, and every alias stores evidence such as the metric
 expression. The parser uses high-confidence aliases after exact metric matching fails; low
 confidence or ambiguous aliases do not run silently.
 
-AI-assisted enrichment can be added later as a bounded review step, but the same rule applies:
-AI may suggest labels and aliases over scanned metadata, never invent tables, columns, values,
-or SQL.
+AI-assisted enrichment is a bounded review step: it may propose a filtered metric only from an
+existing metric and exact, non-PII, low-cardinality profiled values. Proposals remain blocked
+until approved and cannot introduce tables, columns, joins, expressions, unobserved values, or
+SQL.
 
 ## Install & set up
 

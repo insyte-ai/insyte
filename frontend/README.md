@@ -39,6 +39,14 @@ The frontend depends only on the JSON/SSE contract in
 request is streamed from `POST /api/conversations/{id}/messages` → SSE
 `GET /api/analyses/{id}/events`.
 
+Routing-aware clients may also receive:
+
+- `model_routed` — task name, ordered local backends, and whether the route is deterministic.
+- `report_critic_completed` — whether report grounding passed and any unsupported claims.
+
+These are progress/audit events. The final `response_completed` payload remains the authoritative
+typed `AnalysisResult`, and the frontend must not infer permissions from a selected backend.
+
 Saved investigations are read from:
 
 - `GET /api/investigations`
