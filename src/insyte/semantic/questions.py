@@ -26,7 +26,11 @@ def word_count(text: str) -> int:
 
 
 def validate_generated_questions(
-    data: object, layer: SemanticLayer, *, generated_by: str
+    data: object,
+    layer: SemanticLayer,
+    *,
+    generated_by: str,
+    allowed_dimensions: dict[str, set[str]] | None = None,
 ) -> list[StarterQuestion]:
     """Accept only concise questions tied to exact known metric and dimension IDs."""
 
@@ -49,10 +53,16 @@ def validate_generated_questions(
             not question.endswith("?")
             or not 3 <= word_count(question) <= MAX_QUESTION_WORDS
             or metric is None
+            or metric.requires_confirmation
             or mode not in _MODES
             or (dimension_name is not None and dimension is None)
             or (mode == "segment" and dimension is None)
             or (mode != "segment" and dimension is not None)
+            or (
+                mode == "segment"
+                and allowed_dimensions is not None
+                and dimension_name not in allowed_dimensions.get(metric_name, set())
+            )
             or (mode in {"timeseries", "forecast", "investigation"} and not metric.time_column)
         ):
             continue

@@ -24,6 +24,9 @@ def list_metrics(services: ProjectServices = Depends(get_services)) -> dict:
                 "status": m.status.value,
                 "format": m.format.value,
                 "confidence": m.confidence,
+                "requires_confirmation": m.requires_confirmation,
+                "assumption": m.assumption,
+                "evidence": m.evidence,
             }
             for name, m in sorted(layer.metrics.items())
         ],
@@ -51,4 +54,19 @@ def get_metric(name: str, services: ProjectServices = Depends(get_services)) -> 
         "time_column": metric.time_column,
         "status": metric.status.value,
         "format": metric.format.value,
+        "requires_confirmation": metric.requires_confirmation,
+        "assumption": metric.assumption,
+        "evidence": metric.evidence,
+    }
+
+
+@router.post("/metrics/{name}/approve")
+def approve_metric(name: str, services: ProjectServices = Depends(get_services)) -> dict:
+    if services.metrics.get(name) is None:
+        raise HTTPException(status_code=404, detail=f"Metric '{name}' not found.")
+    metric = services.metrics.approve(name)
+    return {
+        "name": name,
+        "status": metric.status.value,
+        "requires_confirmation": metric.requires_confirmation,
     }

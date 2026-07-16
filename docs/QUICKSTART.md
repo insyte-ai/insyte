@@ -51,8 +51,9 @@ insyte init
    sent to an AI. (Advanced: choose "environment variable" instead, or pass `--db-url`.)
 2. **AI tool** — Claude Code, Codex, both, or none.
 3. Insyte then **connects, scans the schema, profiles bounded safe samples, generates and
-   validates metrics, creates short schema-grounded starter questions, and installs the MCP
-   server** into your chosen tool — no scripts, no environment variables.
+   validates metrics, proposes reviewable derived metrics, creates short schema-grounded starter
+   questions, and installs the MCP server** into your chosen tool — no scripts or environment
+   variables.
 
 Metric generation also creates safe semantic aliases from scanned metadata. For example, if
 your schema has `sales_orders.order_ts`, Insyte can generate `sales_order_count` and understand
@@ -117,8 +118,13 @@ insyte analyze total_amount --grain month        # time series + chart
 insyte analyze total_amount --by city            # segment + chart
 insyte metrics                                    # list the generated metrics
 insyte semantic generate                          # refresh metrics, dimensions, and aliases
+insyte semantic enrich --backend codex            # propose filtered metrics for review
 insyte semantic questions --backend codex         # refresh Studio starter questions
 ```
+
+Derived proposals inherit an existing metric expression and can filter only exact, observed,
+non-PII values from that metric's source table. They are blocked until approved in Studio's
+Metrics page or with `insyte metrics approve <name>`.
 
 ## Safety — try it
 

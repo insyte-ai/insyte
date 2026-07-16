@@ -31,6 +31,8 @@ from insyte.nl.llm import (
 from insyte.nl.periods import period_from_token
 from insyte.semantic.catalog import SemanticCatalog
 from insyte.semantic.models import Metric, MetricFormat, SemanticLayer
+from insyte.semantic.proposals import DerivedMetricProposal
+from insyte.semantic.qualifiers import unresolved_terms
 from insyte.services.analysis_service import AnalysisService
 from insyte.services.schema_service import SchemaService
 from insyte.studio.context import ChatContext, build_chat_context
@@ -76,11 +78,20 @@ def stream_analysis(
     history: list[tuple[str, str]] | None = None,
     chat_context: ChatContext | None = None,
     detailed: bool = False,
+    on_proposal: Callable[[DerivedMetricProposal], None] | None = None,
 ) -> Iterator[str]:
     """Yield SSE strings for an analysis and persist the final result via ``on_complete``."""
 
     yield sse("question_received", {"analysis_id": analysis_id})
     intent = parse_intent(question, layer)
+    if intent.kind is IntentKind.analysis and intent.metric:
+        unresolved = unresolved_terms(
+            question, intent.metric, layer, dimension_name=intent.dimension
+        )
+        if unresolved:
+            # Give the grounded AI planner a chance to propose an exact profiled filter. The
+            # base metric must never execute after silently dropping these terms.
+            intent = Intent(IntentKind.unknown, raw=question)
     yield sse(
         "context_resolved",
         {"context": chat_context.to_dict() if chat_context is not None else None},
@@ -188,6 +199,40 @@ def stream_analysis(
             yield sse("response_completed", {"result": result.model_dump(mode="json")})
             return
 
+        if resolution.kind == "clarification":
+            if resolution.proposal is not None and on_proposal is not None:
+                on_proposal(resolution.proposal)
+            message = resolution.text or "This business definition needs clarification."
+            if resolution.proposal is not None:
+                message += (
+                    " Review it, then confirm with `insyte metrics approve "
+                    f"{resolution.proposal.name}`."
+                )
+            result = studio_result_message(
+                analysis_id,
+                message,
+                status="clarification",
+                suggested=_suggestions(layer),
+            )
+            clarification_intent = Intent(
+                IntentKind.analysis,
+                metric=resolution.metric,
+                mode=AnalysisMode.aggregate,
+                raw=question,
+            )
+            context = _final_context(
+                question,
+                result,
+                chat_context,
+                clarification_intent,
+                period,
+                detailed=detailed,
+            )
+            result.context = context.to_dict()
+            on_complete(result, context)
+            yield sse("response_completed", {"result": result.model_dump(mode="json")})
+            return
+
         intent = Intent(
             IntentKind.analysis,
             mode=resolution.mode or AnalysisMode.aggregate,
@@ -198,6 +243,26 @@ def stream_analysis(
             raw=question,
         )
         period = period_from_token(resolution.period)
+
+    selected_metric = layer.metrics.get(intent.metric) if intent.metric else None
+    if selected_metric is not None and selected_metric.requires_confirmation:
+        result = studio_result_message(
+            analysis_id,
+            (
+                f"{selected_metric.label} is based on an unconfirmed assumption: "
+                f"{selected_metric.assumption} Confirm it with `insyte metrics approve "
+                f"{intent.metric}` before running this analysis."
+            ),
+            status="clarification",
+            suggested=_suggestions(layer),
+        )
+        context = _final_context(
+            question, result, chat_context, intent, period, detailed=detailed
+        )
+        result.context = context.to_dict()
+        on_complete(result, context)
+        yield sse("response_completed", {"result": result.model_dump(mode="json")})
+        return
 
     yield sse("metric_resolved", {"metric": intent.metric})
     mode = intent.mode or AnalysisMode.aggregate

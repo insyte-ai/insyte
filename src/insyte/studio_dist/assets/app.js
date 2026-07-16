@@ -1409,10 +1409,15 @@
       body.innerHTML = "";
       if (!m.metrics.length) { body.append(el("div", { class: "muted" }, "No metrics. Run 'insyte semantic generate'.")); return; }
       body.append(el("table", { class: "list-table" },
-        el("thead", {}, el("tr", {}, el("th", {}, "Name"), el("th", {}, "Label"), el("th", {}, "Status"), el("th", {}, "Expression"))),
+        el("thead", {}, el("tr", {}, el("th", {}, "Name"), el("th", {}, "Label"), el("th", {}, "Status"), el("th", {}, "Definition"), el("th", {}, "Action"))),
         el("tbody", {}, ...m.metrics.map((x) =>
           el("tr", {}, el("td", {}, x.name), el("td", {}, x.label),
-            el("td", {}, el("span", { class: "chip " + x.status }, x.status)), el("td", {}, x.expression))
+            el("td", {}, el("span", { class: "chip " + x.status }, x.requires_confirmation ? "review" : x.status)),
+            el("td", {}, x.assumption || x.expression),
+            el("td", {}, x.requires_confirmation ? el("button", {
+              class: "secondary-btn",
+              onClick: () => postJSON("/metrics/" + encodeURIComponent(x.name) + "/approve", {}).then(route),
+            }, "Approve") : ""))
         ))
       ));
     });

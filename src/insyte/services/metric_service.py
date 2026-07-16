@@ -33,5 +33,9 @@ class MetricService:
         if metric is None:
             raise MetricNotFoundError(name)
         metric.status = MetricStatus.confirmed
+        metric.requires_confirmation = False
+        for alias in layer.aliases.values():
+            if alias.target_type == "metric" and alias.target == name:
+                alias.status = MetricStatus.confirmed
         self._repository.save(layer)
         return metric

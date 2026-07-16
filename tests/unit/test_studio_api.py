@@ -247,6 +247,22 @@ def test_schema_and_metrics(client: TestClient) -> None:
     )
 
 
+def test_metric_approval_clears_confirmation_requirement(client: TestClient) -> None:
+    repo = SemanticRepository(paths.semantic_path("demo"))
+    layer = repo.load()
+    layer.metrics["order_count"].requires_confirmation = True
+    layer.metrics["order_count"].assumption = "Completed means status completed."
+    repo.save(layer)
+
+    response = client.post("/api/metrics/order_count/approve")
+
+    assert response.status_code == 200
+    assert response.json()["requires_confirmation"] is False
+    assert SemanticRepository(paths.semantic_path("demo")).load().metrics[
+        "order_count"
+    ].status.value == "confirmed"
+
+
 def test_conversation_and_analysis_flow(client: TestClient) -> None:
     conv = client.post("/api/conversations", json={"title": "Test"}).json()
     assert conv["id"].startswith("conv_")
@@ -272,6 +288,69 @@ def test_conversation_and_analysis_flow(client: TestClient) -> None:
     # The assistant message was appended.
     convo = client.get(f"/api/conversations/{conv['id']}").json()
     assert [m["role"] for m in convo["messages"]] == ["user", "assistant"]
+
+
+def test_ambiguous_qualifier_saves_blocked_metric_proposal(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from insyte.metadata.models import CardinalityCategory, ColumnProfile
+    from insyte.nl.llm import Backend, NLResolution
+    from insyte.semantic.proposals import DerivedMetricProposal
+    from insyte.studio import events
+
+    proposal = DerivedMetricProposal(
+        name="positive_review_count",
+        label="Positive review count",
+        base_metric="order_count",
+        filter_column="orders.status",
+        filter_values=("completed",),
+        aliases=("positive feedback",),
+        assumption="Completed orders represent positive feedback.",
+        confidence=0.8,
+        evidence=("metric:order_count", "profile:public.orders.status"),
+    )
+    monkeypatch.setattr(events, "available_backends", lambda _pref: [Backend("codex", [])])
+    monkeypatch.setattr(
+        events,
+        "resolve",
+        lambda *args, **kwargs: NLResolution(
+            "clarification",
+            text="This definition needs confirmation.",
+            metric="order_count",
+            proposal=proposal,
+        ),
+    )
+    monkeypatch.setattr(
+        events.SchemaService,
+        "column_profiles",
+        lambda _self: [
+            ColumnProfile(
+                schema="public",
+                table="orders",
+                column="status",
+                null_fraction=0,
+                distinct_estimate=1,
+                duplicate_ratio=0.9,
+                cardinality=CardinalityCategory.constant,
+                sampled_rows=10,
+                top_values=[("completed", 10)],
+            )
+        ],
+    )
+
+    conv = client.post("/api/conversations", json={"title": "Qualifier"}).json()
+    posted = client.post(
+        f"/api/conversations/{conv['id']}/messages",
+        json={"content": "Show positive feedback trend"},
+    ).json()
+    result = _final_result(client.get(posted["stream_url"]).text)
+
+    assert result["status"] == "clarification"
+    layer = SemanticRepository(paths.semantic_path("demo")).load()
+    assert layer.metrics["positive_review_count"].requires_confirmation is True
+    assert layer.metrics["positive_review_count"].filters == {
+        "orders.status": ["completed"]
+    }
 
 
 def test_investigation_question_streams_timeline(client: TestClient) -> None:

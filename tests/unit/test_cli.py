@@ -71,6 +71,7 @@ def test_guided_setup_profiles_before_generating_semantics(
     monkeypatch.setattr(profile_command, "profile", lambda **kwargs: calls.append("profile"))
     monkeypatch.setattr(semantic_command, "generate", lambda **kwargs: calls.append("generate"))
     monkeypatch.setattr(semantic_command, "validate", lambda **kwargs: calls.append("validate"))
+    monkeypatch.setattr(semantic_command, "enrich", lambda **kwargs: calls.append("enrich"))
     monkeypatch.setattr(semantic_command, "questions", lambda **kwargs: calls.append("questions"))
     monkeypatch.setattr(
         mcp_command, "install_client", lambda *args, **kwargs: calls.append("mcp")
@@ -84,6 +85,7 @@ def test_guided_setup_profiles_before_generating_semantics(
         "profile",
         "generate",
         "validate",
+        "enrich",
         "questions",
         "mcp",
     ]

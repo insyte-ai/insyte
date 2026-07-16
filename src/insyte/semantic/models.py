@@ -46,6 +46,9 @@ class Metric(BaseModel):
     status: MetricStatus = MetricStatus.suggested
     confidence: float = 0.5
     format: MetricFormat = MetricFormat.number
+    requires_confirmation: bool = False
+    assumption: str = ""
+    evidence: list[str] = Field(default_factory=list)
 
 
 class Dimension(BaseModel):

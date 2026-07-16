@@ -58,10 +58,14 @@ def approve(
     if metric is None:
         console.print(f"[red]Error:[/red] metric {name!r} is not defined.")
         raise typer.Exit(1)
-    if metric.status is MetricStatus.confirmed:
+    if metric.status is MetricStatus.confirmed and not metric.requires_confirmation:
         console.print(f"[dim]Metric {name!r} is already confirmed.[/dim]")
         raise typer.Exit(0)
     metric.status = MetricStatus.confirmed
+    metric.requires_confirmation = False
+    for alias in layer.aliases.values():
+        if alias.target_type == "metric" and alias.target == name:
+            alias.status = MetricStatus.confirmed
     repository.save(layer)
     console.print(f"[green]Approved[/green] metric [bold]{name}[/bold] (now confirmed).")
 

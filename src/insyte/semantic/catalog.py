@@ -189,6 +189,32 @@ class SemanticCatalog:
             evidence=tuple(evidence),
         )
 
+    def safe_filter_fields(self, layer: SemanticLayer | None = None) -> list[dict[str, object]]:
+        """Return profiled, non-PII fields on candidate metric source tables."""
+
+        selected = layer or self.layer
+        source_tables = {_qualified(metric.source_table) for metric in selected.metrics.values()}
+        fields: list[dict[str, object]] = []
+        for profile in self.profiles:
+            table = _qualified(f"{profile.schema}.{profile.table}")
+            if (
+                table not in source_tables
+                or profile.is_pii
+                or not profile.top_values
+                or profile.distinct_estimate > 50
+            ):
+                continue
+            fields.append(
+                {
+                    "column": f"{profile.table}.{profile.column}",
+                    "observed_values": [value for value, _ in profile.top_values[:20]],
+                    "min": profile.min_value,
+                    "max": profile.max_value,
+                    "cardinality": profile.cardinality.value,
+                }
+            )
+        return fields
+
     def _alias_score(
         self, query: str, query_tokens: set[str], target: str, target_type: str
     ) -> tuple[float, list[str]]:

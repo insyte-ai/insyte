@@ -258,6 +258,13 @@ def _run_guided_setup(ai_clients: list[AIClient]) -> None:
         _step("Validating generated semantics", lambda: semantic_command.validate(project=None))
         if ai_clients:
             _step(
+                "Proposing grounded derived metrics",
+                lambda: semantic_command.enrich(
+                    project=None,
+                    backend=ai_clients[0].value if len(ai_clients) == 1 else "auto",
+                ),
+            )
+            _step(
                 "Generating grounded starter questions",
                 lambda: semantic_command.questions(
                     project=None,

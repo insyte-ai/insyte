@@ -9,8 +9,14 @@ from rich.table import Table
 from insyte.cli._project import resolve_config
 from insyte.config import paths
 from insyte.metadata.repository import MetadataRepository
-from insyte.nl.llm import available_backends, resolve_starter_questions
+from insyte.nl.llm import (
+    available_backends,
+    resolve_semantic_proposals,
+    resolve_starter_questions,
+)
+from insyte.semantic.catalog import SemanticCatalog
 from insyte.semantic.generator import generate_semantic
+from insyte.semantic.proposals import apply_metric_proposal
 from insyte.semantic.repository import SemanticRepository
 from insyte.semantic.validator import SchemaIndex, validate_semantic
 
@@ -21,6 +27,45 @@ semantic_app = typer.Typer(
     no_args_is_help=True,
     add_completion=False,
 )
+
+
+@semantic_app.command("enrich")
+def enrich(
+    project: str | None = typer.Option(None, "--project", "-p", help="Project to update."),
+    backend: str = typer.Option("auto", "--backend", help="claude, codex, auto, or off."),
+) -> None:
+    """Propose grounded derived metrics that remain blocked until explicitly approved."""
+
+    config = resolve_config(project)
+    semantic_repo = SemanticRepository(paths.semantic_path(config.project.name))
+    layer = semantic_repo.load()
+    metadata = MetadataRepository(paths.metadata_path(config.project.name))
+    try:
+        profiles = metadata.list_column_profiles() if metadata.has_profiles() else []
+    finally:
+        metadata.dispose()
+    if not layer.metrics or not profiles:
+        console.print("[yellow]Metrics and column profiles are required for enrichment.[/yellow]")
+        raise typer.Exit(1)
+
+    proposals = []
+    used_backend = ""
+    for candidate in available_backends(backend):
+        proposals = resolve_semantic_proposals(layer, profiles, candidate)
+        if proposals:
+            used_backend = candidate.name
+            break
+    if not proposals:
+        console.print("[dim]No valid derived metric proposals were generated.[/dim]")
+        raise typer.Exit(0)
+    for proposal in proposals:
+        layer = apply_metric_proposal(proposal, layer)
+    semantic_repo.save(layer)
+    console.print(
+        f"Added [green]{len(proposals)}[/green] confirmation-required metric proposals with "
+        f"[bold]{used_backend}[/bold]."
+    )
+    console.print("Review with [bold]insyte metrics[/bold] and approve definitions you accept.")
 
 
 @semantic_app.command("questions")
@@ -40,10 +85,20 @@ def questions(
         )
         raise typer.Exit(1)
 
+    metadata = MetadataRepository(paths.metadata_path(config.project.name))
+    try:
+        catalog = SemanticCatalog(
+            layer,
+            profiles=metadata.list_column_profiles() if metadata.has_profiles() else [],
+            relationships=metadata.list_relationships() if metadata.has_metadata() else [],
+        )
+    finally:
+        metadata.dispose()
+
     generated = []
     used_backend = ""
     for candidate in available_backends(backend):
-        generated = resolve_starter_questions(layer, candidate)
+        generated = resolve_starter_questions(layer, candidate, catalog=catalog)
         if generated:
             used_backend = candidate.name
             break

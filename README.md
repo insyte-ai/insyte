@@ -96,8 +96,8 @@ insyte init
    never logged, never sent to an AI).
 2. Pick your **AI tool** — Claude Code, Codex, or none.
 3. Insyte then **connects, scans and profiles the schema, generates and validates metrics,
-   creates concise schema-grounded starter questions, and wires up your AI tool** — no scripts,
-   no environment variables.
+   proposes grounded derived metrics for review, creates concise schema-grounded starter
+   questions, and wires up your AI tool** — no scripts, no environment variables.
 
 Then use it:
 
@@ -139,6 +139,7 @@ or `insyte mcp install codex`.)
 | `insyte analyze <metric> --by <dimension>` | A single analysis from the CLI |
 | `insyte metrics` | List the metrics Insyte generated |
 | `insyte semantic generate` | Regenerate suggested metrics, dimensions, entities, and safe aliases from scanned metadata |
+| `insyte semantic enrich` | Ask the local AI CLI for profiled-value-derived metric proposals; proposals remain blocked until approved |
 | `insyte semantic questions` | Regenerate short Studio starter questions with the selected local AI CLI |
 | `insyte semantic validate` | Verify every semantic object against the latest scanned schema |
 | `insyte status` / `insyte doctor` | Project state / health checks |
@@ -146,6 +147,11 @@ or `insyte mcp install codex`.)
 Everything lives under `~/.insyte/projects/<name>/` (config, stored URL, scanned schema,
 metrics, aliases, conversations, saved investigations). The connection URL is read only when
 needed and never written to `config.yaml`.
+
+When a question contains an undefined qualifier such as "positive", "failed", or "active",
+Insyte does not drop the qualifier and run the base metric. It may propose a derived metric using
+an exact non-PII profiled field and observed values, but that metric remains non-executable until
+you approve it from Studio's Metrics page or with `insyte metrics approve <name>`.
 
 ## Feedback
 

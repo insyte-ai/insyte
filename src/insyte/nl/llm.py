@@ -29,6 +29,12 @@ from insyte.analytics.models import TimeGrain
 from insyte.nl.periods import RELATIVE_PERIODS
 from insyte.semantic.catalog import SemanticCatalog
 from insyte.semantic.models import SemanticLayer, StarterQuestion
+from insyte.semantic.proposals import (
+    DerivedMetricProposal,
+    apply_metric_proposal,
+    validate_metric_proposal,
+)
+from insyte.semantic.qualifiers import unresolved_terms
 from insyte.semantic.questions import QUESTION_VOCABULARY, validate_generated_questions
 from insyte.tui.intent import AnalysisMode
 
@@ -109,6 +115,7 @@ class NLResolution:
     grain: TimeGrain | None = None
     dimension: str | None = None
     period: str | None = None
+    proposal: DerivedMetricProposal | None = None
 
 
 def _args_for(name: str) -> list[str]:
@@ -141,18 +148,30 @@ def detect_backend(preference: str = "auto") -> Backend | None:
 
 
 def resolve_starter_questions(
-    layer: SemanticLayer, backend: Backend, *, timeout: float | None = None
+    layer: SemanticLayer,
+    backend: Backend,
+    *,
+    timeout: float | None = None,
+    catalog: SemanticCatalog | None = None,
 ) -> list[StarterQuestion]:
     """Generate concise project prompts and reject every ungrounded model response."""
 
-    metrics = [
-        {
-            "id": name,
-            "label": metric.label,
-            "supports_time": bool(metric.time_column),
-        }
-        for name, metric in sorted(layer.metrics.items())
-    ]
+    allowed_dimensions: dict[str, set[str]] = {}
+    metrics = []
+    for name, metric in sorted(layer.metrics.items()):
+        if metric.requires_confirmation:
+            continue
+        capability = catalog.capability(name) if catalog else None
+        metric_dimensions = list(capability.dimensions) if capability else list(layer.dimensions)
+        allowed_dimensions[name] = set(metric_dimensions)
+        metrics.append(
+            {
+                "id": name,
+                "label": metric.label,
+                "supports_time": bool(metric.time_column),
+                "allowed_dimensions": metric_dimensions,
+            }
+        )
     dimensions = [
         {"id": name, "label": dimension.label or name}
         for name, dimension in sorted(layer.dimensions.items())
@@ -161,8 +180,9 @@ def resolve_starter_questions(
         "Create exactly four concise starter questions for a business analytics UI. "
         "Prefer 7-8 words; never exceed 10 words. Use only the exact metric and dimension "
         "IDs supplied below. Do not invent concepts, filters, values, or periods beyond common "
-        "relative periods. Include a varied useful set. A segment question requires one exact "
-        "dimension. Timeseries, forecast, and investigation require supports_time=true. "
+        "relative periods. Include a varied useful set. A segment question requires one "
+        "dimension listed in that metric's allowed_dimensions. Timeseries, forecast, and "
+        "investigation require supports_time=true. "
         "Apart from metric and dimension label words, use only these connecting words: "
         f"{', '.join(sorted(QUESTION_VOCABULARY))}. "
         "Return only one JSON object: "
@@ -180,7 +200,84 @@ def resolve_starter_questions(
     if data is None:
         logger.warning("starter_questions_no_json", extra={"backend": backend.name})
         return []
-    return validate_generated_questions(data, layer, generated_by=backend.name)
+    return validate_generated_questions(
+        data,
+        layer,
+        generated_by=backend.name,
+        allowed_dimensions=allowed_dimensions,
+    )
+
+
+def resolve_semantic_proposals(
+    layer: SemanticLayer,
+    profiles: list,
+    backend: Backend,
+    *,
+    timeout: float | None = None,
+) -> list[DerivedMetricProposal]:
+    """Propose confirmation-required filtered metrics from exact profiled values."""
+
+    base_metrics = [
+        {
+            "id": name,
+            "label": metric.label,
+            "source_table": metric.source_table,
+        }
+        for name, metric in sorted(layer.metrics.items())
+        if not metric.requires_confirmation
+    ]
+    safe_fields = [
+        {
+            "column": f"{profile.table}.{profile.column}",
+            "observed_values": [value for value, _ in profile.top_values[:20]],
+            "cardinality": profile.cardinality.value,
+        }
+        for profile in profiles
+        if not profile.is_pii and profile.top_values and profile.distinct_estimate <= 50
+    ]
+    prompt = (
+        "Propose up to 8 useful derived business metrics from exact existing base metrics and "
+        "profiled field values. Each proposal must inherit one base metric and add one IN filter. "
+        "Use only exact IDs, columns, and observed values below. Do not write SQL or invent a "
+        "definition. Every proposal is an assumption requiring user confirmation. Prefer clear "
+        "states such as completed, failed, active, positive, negative, approved, or returned only "
+        "when supported by field names and observed values. Return only JSON: "
+        '{"proposals":[{"name":"snake_case","label":"Short label",'
+        '"base_metric":"exact_id","filter_column":"exact field",'
+        '"filter_values":["exact observed value"],"aliases":["short phrase"],'
+        '"assumption":"explicit business definition","confidence":0.0}]}.\n'
+        f"Base metrics: {json.dumps(base_metrics, ensure_ascii=False)}\n"
+        f"Safe profiled fields: {json.dumps(safe_fields, ensure_ascii=False)}"
+    )
+    out = _run(backend, prompt, timeout or _TIMEOUT_SECONDS)
+    if out is None:
+        return []
+    objects = _all_json_objects(out)
+    data = next((obj for obj in reversed(objects) if "proposals" in obj), None)
+    if data is None or not isinstance(data.get("proposals"), list):
+        logger.warning("semantic_proposals_no_json", extra={"backend": backend.name})
+        return []
+
+    accepted: list[DerivedMetricProposal] = []
+    working = layer
+    for raw in data["proposals"][:8]:
+        if not isinstance(raw, dict):
+            continue
+        grounding_text = " ".join(
+            [
+                str(raw.get("label") or ""),
+                str(raw.get("assumption") or ""),
+                *[str(item) for item in raw.get("aliases", [])],
+            ]
+        )
+        proposal = validate_metric_proposal(
+            raw, working, profiles, question=grounding_text
+        )
+        if proposal is None:
+            continue
+        accepted.append(proposal)
+        working = apply_metric_proposal(proposal, working)
+    return accepted
 
 
 def build_prompt(
@@ -190,6 +287,7 @@ def build_prompt(
     now: datetime | None = None,
     history: list[tuple[str, str]] | None = None,
     context: str | None = None,
+    filter_fields: list[dict[str, object]] | None = None,
 ) -> str:
     """Construct the translation prompt (metric/dimension names, recent turns, the question)."""
 
@@ -228,6 +326,7 @@ def build_prompt(
     )
     grains = ", ".join(g.value for g in TimeGrain)
     periods = ", ".join(RELATIVE_PERIODS)
+    fields = json.dumps(filter_fields or [], ensure_ascii=False)
     return (
         "You translate a business question into a JSON command for a metrics engine. "
         "Do not use any tools. Respond with ONLY a single JSON object and nothing else — "
@@ -237,12 +336,21 @@ def build_prompt(
         f"Available dimensions (name: label):\n{dimensions or '  (none)'}\n\n"
         f"Time grains: {grains}\n"
         f"Relative periods: {periods}\n\n"
+        f"Safe profiled filter fields and observed values: {fields}\n\n"
         "Rules:\n"
         "- This is a data analyst, not a general-purpose assistant. If the question is not "
         "about the connected business data, its metrics, dimensions, trends, comparisons, "
         "forecasts, or investigations, return kind 'out_of_scope'. Never answer general "
         "knowledge, programming, writing, personal advice, or unrelated questions.\n"
         "- Pick the single best metric by NAME from the list above.\n"
+        "- Preserve every material qualifier in the question, such as positive, failed, "
+        "completed, active, premium, or a named state. Never silently drop a qualifier and "
+        "run the unfiltered base metric.\n"
+        "- If no listed metric implements a material qualifier, return kind 'clarification'. "
+        "You may propose one derived metric by inheriting a listed base_metric and filtering "
+        "one exact safe profiled field to exact observed values. Never write SQL, expressions, "
+        "columns, or values outside the supplied lists. The proposal always requires user "
+        "confirmation.\n"
         "- mode: 'segment' when the user asks to break down 'by <dimension>'; "
         "'timeseries' for a trend over time (also set grain); "
         "'compare' for this-period-vs-previous (also set grain); "
@@ -264,6 +372,14 @@ def build_prompt(
         '"grain": "day|week|month|quarter|year|null", '
         '"dimension": "<dimension_name>|null", '
         '"period": "<relative_period_token>|null"}\n'
+        "OR\n"
+        '{"kind":"clarification","metric":"<base_metric>",'
+        '"unresolved_terms":["<exact words from question>"],'
+        '"proposal":{"name":"<new_snake_case_name>","label":"<short label>",'
+        '"base_metric":"<metric_name>","filter_column":"<exact supplied column>",'
+        '"filter_values":["<exact observed value>"],'
+        '"aliases":["<phrase using words from question/base metric>"],'
+        '"assumption":"<definition requiring confirmation>","confidence":0.0}}\n'
         "OR\n"
         '{"kind": "guidance", "text": "<short analytics-only guidance>"}\n'
         "OR\n"
@@ -328,7 +444,13 @@ def _all_json_objects(text: str) -> list[dict]:
     return results
 
 
-def _validate(data: dict, layer: SemanticLayer) -> NLResolution | None:
+def _validate(
+    data: dict,
+    layer: SemanticLayer,
+    *,
+    profiles: list | None = None,
+    question: str = "",
+) -> NLResolution | None:
     """Coerce raw model JSON into a safe :class:`NLResolution`, or ``None`` if unusable."""
 
     kind = str(data.get("kind") or "").lower()
@@ -341,6 +463,41 @@ def _validate(data: dict, layer: SemanticLayer) -> NLResolution | None:
         if text and _mentions_semantic_object(text, layer):
             return NLResolution("guidance", text=text)
         return NLResolution("out_of_scope")
+
+    if kind == "clarification":
+        metric_name = _match_key(str(data.get("metric") or ""), layer.metrics)
+        if metric_name is None:
+            return None
+        unresolved = [
+            str(item).strip()
+            for item in data.get("unresolved_terms", [])
+            if str(item).strip() and str(item).strip().casefold() in question.casefold()
+        ]
+        if not unresolved:
+            return None
+        proposal = validate_metric_proposal(
+            data.get("proposal"), layer, profiles or [], question=question
+        )
+        label = layer.metrics[metric_name].label
+        terms = ", ".join(dict.fromkeys(unresolved))
+        if proposal is None:
+            return NLResolution(
+                "clarification",
+                text=(
+                    f"I found {label}, but I cannot safely define {terms} from the available "
+                    "schema evidence. Please specify the exact field and values that define it."
+                ),
+                metric=metric_name,
+            )
+        return NLResolution(
+            "clarification",
+            text=(
+                f"I found {label}, but this definition needs confirmation: "
+                f"{proposal.assumption} Proposed metric: {proposal.name}."
+            ),
+            metric=metric_name,
+            proposal=proposal,
+        )
 
     # Treat anything else as an analysis attempt; the metric must be real.
     raw_metric = str(data.get("metric") or "").strip()
@@ -370,6 +527,20 @@ def _validate(data: dict, layer: SemanticLayer) -> NLResolution | None:
         grain = TimeGrain.month
     if mode is AnalysisMode.compare and grain is None:
         grain = TimeGrain.month
+
+    unresolved = unresolved_terms(
+        question, metric, layer, dimension_name=dimension
+    ) if question else []
+    if unresolved:
+        return NLResolution(
+            "clarification",
+            text=(
+                f"I found {layer.metrics[metric].label}, but the current metric definition "
+                f"does not represent: {', '.join(unresolved)}. Please define the exact field "
+                "and values for those terms."
+            ),
+            metric=metric,
+        )
 
     return NLResolution(
         "analysis",
@@ -561,7 +732,14 @@ def resolve(
                 ]
             },
         )
-    prompt = build_prompt(question, prompt_layer, now=now, history=history, context=context)
+    prompt = build_prompt(
+        question,
+        prompt_layer,
+        now=now,
+        history=history,
+        context=context,
+        filter_fields=(catalog.safe_filter_fields(prompt_layer) if catalog else []),
+    )
     out = _run(backend, prompt, timeout or _TIMEOUT_SECONDS)
     if out is None:
         return None
@@ -569,7 +747,12 @@ def resolve(
     if data is None:
         logger.warning("nl_resolve_no_json", extra={"backend": backend.name})
         return None
-    return _validate(data, layer)
+    return _validate(
+        data,
+        layer,
+        profiles=(catalog.profiles if catalog else []),
+        question=question,
+    )
 
 
 # --------------------------------------------------------------------------------------------

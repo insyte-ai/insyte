@@ -9,6 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 from insyte.analytics.models import TimeGrain
+from insyte.metadata.models import CardinalityCategory, ColumnProfile
 from insyte.nl import llm
 from insyte.nl.llm import (
     Backend,
@@ -19,6 +20,7 @@ from insyte.nl.llm import (
     detect_backend,
     is_analytics_question,
     resolve,
+    resolve_semantic_proposals,
     resolve_starter_questions,
 )
 from insyte.semantic.models import Dimension, Metric, MetricFormat, SemanticLayer
@@ -146,6 +148,87 @@ def test_starter_questions_are_short_and_grounded(
         "Which city contributes most to order count?",
         "How is order count trending monthly?",
     ]
+
+
+def test_validate_clarification_accepts_only_profiled_filter_values() -> None:
+    profile = ColumnProfile(
+        schema="public",
+        table="orders",
+        column="status",
+        null_fraction=0,
+        distinct_estimate=2,
+        duplicate_ratio=0.9,
+        cardinality=CardinalityCategory.low,
+        sampled_rows=100,
+        top_values=[("completed", 80), ("cancelled", 20)],
+    )
+    data = {
+        "kind": "clarification",
+        "metric": "order_count",
+        "unresolved_terms": ["completed"],
+        "proposal": {
+            "name": "completed_order_count",
+            "label": "Completed order count",
+            "base_metric": "order_count",
+            "filter_column": "orders.status",
+            "filter_values": ["completed"],
+            "aliases": ["completed orders"],
+            "assumption": "Completed orders have status completed.",
+            "confidence": 0.9,
+        },
+    }
+
+    result = _validate(
+        data,
+        _layer(),
+        profiles=[profile],
+        question="Show completed orders monthly",
+    )
+
+    assert result is not None and result.kind == "clarification"
+    assert result.proposal is not None
+    assert result.proposal.filter_values == ("completed",)
+
+
+def test_semantic_enrichment_accepts_grounded_proposal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    profile = ColumnProfile(
+        schema="public",
+        table="orders",
+        column="status",
+        null_fraction=0,
+        distinct_estimate=2,
+        duplicate_ratio=0.9,
+        cardinality=CardinalityCategory.low,
+        sampled_rows=100,
+        top_values=[("completed", 80), ("cancelled", 20)],
+    )
+    output = json.dumps(
+        {
+            "proposals": [
+                {
+                    "name": "completed_order_count",
+                    "label": "Completed order count",
+                    "base_metric": "order_count",
+                    "filter_column": "orders.status",
+                    "filter_values": ["completed"],
+                    "aliases": ["completed orders"],
+                    "assumption": "Completed orders have status completed.",
+                    "confidence": 0.85,
+                }
+            ]
+        }
+    )
+    monkeypatch.setattr(subprocess, "run", _fake_run(output))
+
+    proposals = resolve_semantic_proposals(
+        _layer(), [profile], Backend("codex", ["codex"])
+    )
+
+    assert len(proposals) == 1
+    assert proposals[0].name == "completed_order_count"
+    assert proposals[0].filter_values == ("completed",)
 
 
 # ---- validation --------------------------------------------------------------------------
