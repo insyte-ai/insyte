@@ -573,6 +573,10 @@ Relevant tests:
 - **Explicit month comparisons are period-aware, not inferred.** Investigation Mode only treats
   named month/year pairs as historical comparisons when they are present in the question; it does
   not invent date ranges or assume a hidden business calendar.
+- **Relative investigation periods preserve grain and completeness.** Questions containing
+  `this week`, `this month`, `this quarter`, or `this year` use a finer trend grain and compare
+  the elapsed current window with the equivalent elapsed prior window. Known profile-coverage
+  limitations must be retained in the final result even when the query itself succeeds.
 - **Saved investigations live in metadata SQLite.** Adding/changing these tables means old
   projects may need `Base.metadata.create_all()` to add new tables on Studio startup. Do not
   make this path require a live warehouse or AI backend.

@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import cast
 
+from insyte.analytics.models import TimeGrain
 from insyte.semantic.models import Dimension, Metric, SemanticLayer
 from insyte.services.analysis_service import AnalysisService
 from insyte.studio.investigation import (
     InvestigationService,
     is_investigation_question,
     parse_period_pair,
+    parse_relative_period_pair,
 )
 from insyte.studio.schemas import DataFreshness
 from insyte.tui.intent import AnalysisMode, Intent, IntentKind
@@ -65,9 +68,7 @@ def test_plan_skips_time_steps_when_metric_has_no_time_column() -> None:
 
 
 def test_parse_period_pair_uses_requested_months() -> None:
-    periods = parse_period_pair(
-        "Why did order count drop from February 2026 to March 2026?"
-    )
+    periods = parse_period_pair("Why did order count drop from February 2026 to March 2026?")
     assert periods is not None
     current, baseline = periods
 
@@ -120,3 +121,19 @@ def test_plan_stores_explicit_comparison_periods() -> None:
     assert plan.baseline_period.label == "Feb 2026"
     assert "Mar 2026" in plan.steps[1].title
     assert "Feb 2026" in plan.steps[2].title
+
+
+def test_this_week_uses_daily_trend_and_matched_previous_week() -> None:
+    periods = parse_relative_period_pair(
+        "Why has return count increased this week?",
+        now=datetime(2026, 7, 16, 10, tzinfo=UTC),
+    )
+    assert periods is not None
+    current, baseline, comparison_grain, trend_grain = periods
+
+    assert current.start == datetime(2026, 7, 13, tzinfo=UTC)
+    assert current.end == datetime(2026, 7, 16, 10, tzinfo=UTC)
+    assert baseline.start == datetime(2026, 7, 6, tzinfo=UTC)
+    assert baseline.end == datetime(2026, 7, 9, 10, tzinfo=UTC)
+    assert comparison_grain is TimeGrain.week
+    assert trend_grain is TimeGrain.day

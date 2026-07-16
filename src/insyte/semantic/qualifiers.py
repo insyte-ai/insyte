@@ -8,13 +8,14 @@ from insyte.semantic.models import SemanticLayer
 
 _WORD = re.compile(r"[a-z0-9]+")
 _ANALYSIS_WORDS_TEXT = (
-    "a about across all amount analysis analyze annual annually are average be break by can "
+    "a about across all amount analysis analyze answer annual annually are average be break by can "
     "change changed compare comparison count current daily data day decrease decreased decline "
     "declined did do does drop dropped expected explain for forecast from give growth has have "
     "highest how i in increase increased investigate is last least low many "
     "april august december february january july june march may me month monthly most much next "
     "november october of on over period previous projected quarter quarterly september show "
-    "tell the this time to total trend trending u value versus volume vs was week weekly were "
+    "please respond tell the this time to total trend trending u value versus volume vs was "
+    "week weekly were "
     "what when which "
     "who why year yearly you"
 )
@@ -50,14 +51,12 @@ def unresolved_terms(
             represented |= _words(phrase)
     if dimension_name and dimension_name in layer.dimensions:
         dimension = layer.dimensions[dimension_name]
-        represented |= _words(
-            f"{dimension_name} {dimension.label or ''} {dimension.source}"
-        )
+        represented |= _words(f"{dimension_name} {dimension.label or ''} {dimension.source}")
 
     remaining: list[str] = []
     seen: set[str] = set()
     for raw in _WORD.findall(question.casefold()):
-        if raw.isdigit():
+        if raw.isdigit() or raw in _ANALYSIS_WORDS:
             continue
         word = _singular(raw)
         if len(word) < 3 or word in _ANALYSIS_WORDS or word in represented or word in seen:

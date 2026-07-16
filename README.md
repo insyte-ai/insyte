@@ -33,7 +33,8 @@ Two things are always true:
 - **Investigation Mode Lite** — ask broader questions like "why did total amount change?" or
   explicit comparisons like "Why did order count drop from February 2026 to March 2026?" and
   Studio runs a safe, multi-step investigation: trend, period-aware comparison, segment
-  breakdown, freshness checks, and next questions.
+  breakdown, freshness checks, and next questions. Relative questions such as "this week" use
+  a daily trend and compare the elapsed window with the same elapsed window last week.
 - **Saved investigations** — completed Studio investigations are saved locally with their
   timeline, report, original question, and linked analysis result. Reopen them from the
   Investigations workspace and export Markdown or JSON.

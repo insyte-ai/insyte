@@ -12,7 +12,7 @@ from decimal import Decimal
 from pydantic import BaseModel, Field
 
 from insyte.analytics.models import AnalysisResult as DomainAnalysisResult
-from insyte.analytics.models import ChartType, PeriodComparison
+from insyte.analytics.models import ChartType, PeriodComparison, TimeGrain
 from insyte.semantic.models import MetricFormat
 
 # --------------------------------------------------------------------------------------------
@@ -191,6 +191,9 @@ class InvestigationPlan(BaseModel):
     period: str | None = None
     current_period: InvestigationPeriod | None = None
     baseline_period: InvestigationPeriod | None = None
+    trend_period: InvestigationPeriod | None = None
+    comparison_grain: TimeGrain = TimeGrain.month
+    trend_grain: TimeGrain = TimeGrain.month
     steps: list[InvestigationStep] = Field(default_factory=list)
     generated_by: str = "deterministic"
 

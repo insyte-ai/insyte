@@ -12,8 +12,8 @@ class AnalystAgent:
     def __init__(self, analysis: AnalysisService) -> None:
         self._analysis = analysis
 
-    def trend(self, metric: str) -> AnalysisResult:
-        return self._analysis.timeseries(metric, TimeGrain.month)
+    def trend(self, metric: str, grain: TimeGrain, period: Period | None = None) -> AnalysisResult:
+        return self._analysis.timeseries(metric, grain, period)
 
     def compare(self, metric: str, current: Period, baseline: Period) -> PeriodComparison:
         return self._analysis.compare(metric, current, baseline)

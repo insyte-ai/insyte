@@ -27,6 +27,7 @@ from insyte.analytics.report import MAX_REPORT_ROWS
 from insyte.exceptions import InsyteError, QueryValidationError
 from insyte.metadata.models import ColumnProfile, RelationshipInfo
 from insyte.nl.llm import Backend, resolve_report
+from insyte.nl.periods import period_from_token
 from insyte.semantic.catalog import MetricCapability, SemanticCatalog
 from insyte.semantic.models import MetricFormat, SemanticLayer
 from insyte.services.analysis_service import AnalysisService
@@ -83,6 +84,18 @@ _MONTH_RE = re.compile(
     r")\s+(\d{4})\b",
     re.IGNORECASE,
 )
+_RELATIVE_PERIODS: tuple[tuple[str, str, TimeGrain, TimeGrain], ...] = (
+    ("this quarter", "this_quarter", TimeGrain.quarter, TimeGrain.week),
+    ("last quarter", "last_quarter", TimeGrain.quarter, TimeGrain.week),
+    ("this month", "this_month", TimeGrain.month, TimeGrain.day),
+    ("last month", "last_month", TimeGrain.month, TimeGrain.day),
+    ("this week", "this_week", TimeGrain.week, TimeGrain.day),
+    ("last week", "last_week", TimeGrain.week, TimeGrain.day),
+    ("this year", "this_year", TimeGrain.year, TimeGrain.month),
+    ("last year", "last_year", TimeGrain.year, TimeGrain.month),
+    ("today", "today", TimeGrain.day, TimeGrain.day),
+    ("yesterday", "yesterday", TimeGrain.day, TimeGrain.day),
+)
 
 
 def is_investigation_question(question: str, intent: Intent) -> bool:
@@ -129,6 +142,13 @@ class InvestigationService:
         has_time = bool(metric_def and metric_def.time_column)
         explicit_periods = parse_period_pair(question)
         current, baseline = explicit_periods if explicit_periods is not None else (None, None)
+        comparison_grain = intent.grain or TimeGrain.month
+        trend_grain = TimeGrain.month
+        trend_period = None
+        relative = None if explicit_periods is not None else parse_relative_period_pair(question)
+        if relative is not None:
+            current, baseline, comparison_grain, trend_grain = relative
+            trend_period = current
         period_label = None
         if current is not None and baseline is not None:
             period_label = f"{current.label} vs {baseline.label}"
@@ -139,7 +159,11 @@ class InvestigationService:
         steps = [
             InvestigationStep(
                 id="trend",
-                title="Review the metric trend",
+                title=(
+                    f"Review the {trend_grain.value} trend for {current.label}"
+                    if trend_period is not None and current is not None
+                    else "Review the metric trend"
+                ),
                 kind="trend",
                 status="pending" if has_time else "skipped",
                 limitation=(
@@ -194,6 +218,9 @@ class InvestigationService:
             period=period_label,
             current_period=_period_payload(current),
             baseline_period=_period_payload(baseline),
+            trend_period=_period_payload(trend_period),
+            comparison_grain=comparison_grain,
+            trend_grain=trend_grain,
             steps=steps,
         )
         if planner_backends:
@@ -240,11 +267,18 @@ class InvestigationService:
                 )
                 continue
 
+            if step.limitation and step.limitation not in limitations:
+                limitations.append(step.limitation)
+
             step.status = "running"
             yield emit("investigation_step_started", {"step": step.model_dump(mode="json")})
             try:
                 if step.kind == "trend":
-                    domain = analyst.trend(plan.metric)
+                    domain = analyst.trend(
+                        plan.metric,
+                        plan.trend_grain,
+                        _period_from_payload(plan.trend_period),
+                    )
                     partial = studio_result_from_analysis(
                         f"{analysis_id}:trend", domain, fmt, self._freshness, []
                     )
@@ -416,6 +450,59 @@ def parse_period_pair(question: str) -> tuple[Period, Period] | None:
     return second, first
 
 
+def parse_relative_period_pair(
+    question: str, *, now: datetime | None = None
+) -> tuple[Period, Period, TimeGrain, TimeGrain] | None:
+    """Resolve a named relative period into a comparable current/baseline pair."""
+
+    normalized = re.sub(r"\s+", " ", question.casefold())
+    now = now or datetime.now(UTC)
+    for phrase, token, comparison_grain, trend_grain in _RELATIVE_PERIODS:
+        if not re.search(rf"\b{re.escape(phrase)}\b", normalized):
+            continue
+        current = period_from_token(token, now=now)
+        if current is None:
+            return None
+        if token.startswith("this_") or token == "today":
+            current = Period(current.label, current.start, min(now, current.end))
+        span = current.end - current.start
+        previous_token = {
+            "this_week": "last_week",
+            "this_month": "last_month",
+            "this_quarter": "last_quarter",
+            "this_year": "last_year",
+            "today": "yesterday",
+        }.get(token)
+        previous = period_from_token(previous_token, now=now) if previous_token else None
+        if previous is not None:
+            baseline = Period(
+                _baseline_label(token),
+                previous.start,
+                min(previous.start + span, previous.end),
+            )
+        else:
+            baseline = Period(
+                _baseline_label(token),
+                current.start - span,
+                current.start,
+            )
+        return current, baseline, comparison_grain, trend_grain
+    return None
+
+
+def _baseline_label(token: str) -> str:
+    labels = {
+        "this_week": "same elapsed period last week",
+        "this_month": "same elapsed period last month",
+        "this_quarter": "same elapsed period last quarter",
+        "this_year": "same elapsed period last year",
+        "today": "same elapsed period yesterday",
+    }
+    if token in labels:
+        return labels[token]
+    return f"period before {token.replace('_', ' ')}"
+
+
 def _period_from_match(match: re.Match[str]) -> Period:
     month_name = match.group(1).lower()
     year = int(match.group(2))
@@ -454,7 +541,7 @@ def _comparison_periods(plan: InvestigationPlan) -> tuple[Period, Period]:
     current, baseline = _explicit_periods(plan)
     if current is not None and baseline is not None:
         return current, baseline
-    return periods_for_grain(TimeGrain.month)
+    return periods_for_grain(plan.comparison_grain)
 
 
 def _pick_dimension(dimensions: list[str]) -> str | None:

@@ -80,7 +80,8 @@ Studio also supports:
   "now by payment status".
 - **Investigation Mode Lite** — ask "why did total amount change?" or a date-bound question like
   "Why did order count drop from February 2026 to March 2026?" to get a deterministic timeline:
-  trend, period-aware comparison, segment breakdown, data freshness, and next questions.
+  trend, period-aware comparison, segment breakdown, data freshness, and next questions. For
+  "this week", Insyte uses daily buckets and compares only the same elapsed portion of last week.
 - **Saved investigations** — completed investigations are saved locally. Open the
   Investigations workspace from the left sidebar to review the timeline, report, linked result,
   and export Markdown/JSON.
