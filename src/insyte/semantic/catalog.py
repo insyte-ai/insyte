@@ -77,6 +77,9 @@ class SemanticCatalog:
             alias_score, alias_reasons = self._alias_score(query, query_tokens, name, "metric")
             if alias_score > score:
                 score, reasons = alias_score, alias_reasons
+            sales_score, sales_reasons = _sales_quantity_score(query_tokens, _tokens(text))
+            if sales_score > score:
+                score, reasons = sales_score, sales_reasons
             if score > 0:
                 candidates.append(CatalogCandidate("metric", name, score, tuple(reasons)))
         for name, dimension in self.layer.dimensions.items():
@@ -263,6 +266,20 @@ def _score(
         score += float(len(overlap) * 2)
         reasons.append("tokens:" + ",".join(sorted(overlap)))
     return score, reasons
+
+
+def _sales_quantity_score(
+    query_tokens: set[str], metric_tokens: set[str]
+) -> tuple[float, list[str]]:
+    asks_for_sales = bool(query_tokens & {"sale", "sold"}) and bool(
+        query_tokens & {"item", "product", "unit"}
+    )
+    is_transaction_quantity = "quantity" in metric_tokens and bool(
+        metric_tokens & {"item", "order"}
+    )
+    if asks_for_sales and is_transaction_quantity:
+        return 9.0, ["semantic:sales_quantity"]
+    return 0.0, []
 
 
 def _normalise(value: str) -> str:

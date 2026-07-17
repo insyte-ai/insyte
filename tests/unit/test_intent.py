@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from insyte.analytics.models import TimeGrain
-from insyte.semantic.models import Dimension, Metric, SemanticAlias, SemanticLayer
+from insyte.semantic.models import Dimension, Metric, MetricStatus, SemanticAlias, SemanticLayer
 from insyte.tui.intent import AnalysisMode, IntentKind, parse_intent
 
 
@@ -101,10 +101,16 @@ def test_metric_alias_resolves_unexpected_phrase(layer: SemanticLayer) -> None:
 
 
 def test_low_confidence_alias_does_not_resolve(layer: SemanticLayer) -> None:
-    layer.aliases["random business term"] = SemanticAlias(
-        target="order_count", confidence=0.72
-    )
+    layer.aliases["random business term"] = SemanticAlias(target="order_count", confidence=0.72)
     assert parse_intent("random business term", layer).kind is IntentKind.unknown
+
+
+def test_suggested_alias_does_not_resolve_before_approval(layer: SemanticLayer) -> None:
+    layer.metrics["order_count"].requires_confirmation = True
+    layer.aliases["products sold"] = SemanticAlias(
+        target="order_count", confidence=0.88, status=MetricStatus.suggested
+    )
+    assert parse_intent("products sold", layer).kind is IntentKind.unknown
 
 
 def test_ambiguous_alias_does_not_resolve(layer: SemanticLayer) -> None:

@@ -16,7 +16,8 @@ _ANALYSIS_WORDS_TEXT = (
     "november october of on over period previous projected quarter quarterly september show "
     "please respond tell the this time to total trend trending u value versus volume vs was "
     "week weekly were "
-    "what when which "
+    "eight eighteen eleven fifteen five four fourteen nine nineteen one seven seventeen six "
+    "sixteen ten thirteen thirty three twelve twenty two what when which "
     "who why year yearly you"
 )
 _ANALYSIS_WORDS = frozenset(_ANALYSIS_WORDS_TEXT.split())
@@ -49,6 +50,10 @@ def unresolved_terms(
     for phrase, alias in layer.aliases.items():
         if alias.target_type == "metric" and alias.target == metric_name:
             represented |= _words(phrase)
+    if "sold" in represented and represented & {"item", "quantity", "unit"}:
+        represented |= {"item", "product", "quantity", "sale", "sold", "unit"}
+    if "quantity" in represented and represented & {"item", "order"}:
+        represented |= {"item", "product", "quantity", "sale", "sold", "unit"}
     if dimension_name and dimension_name in layer.dimensions:
         dimension = layer.dimensions[dimension_name]
         represented |= _words(f"{dimension_name} {dimension.label or ''} {dimension.source}")

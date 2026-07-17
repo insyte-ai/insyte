@@ -105,6 +105,43 @@ def test_extract_json_returns_none_when_absent() -> None:
     assert _extract_json("no json here") is None
 
 
+def test_resolve_excludes_confirmation_required_metrics_from_routing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    layer = _layer()
+    layer.metrics["unconfirmed_product_sales"] = Metric(
+        label="Unconfirmed product sales",
+        expression="COUNT(*)",
+        source_table="public.products",
+        requires_confirmation=True,
+        assumption="Treat active products as sold products.",
+    )
+    captured: dict[str, str] = {}
+
+    def fake_run(_backend, prompt, _timeout):  # noqa: ANN001, ANN202
+        captured["prompt"] = prompt
+        return json.dumps(
+            {
+                "kind": "analysis",
+                "metric": "units_sold",
+                "mode": "aggregate",
+                "period": "last_6_months",
+            }
+        )
+
+    monkeypatch.setattr(llm, "_run", fake_run)
+    result = resolve(
+        "products sold in last 6 months",
+        layer,
+        Backend("codex", ["codex"]),
+    )
+
+    assert result is not None
+    assert result.metric == "units_sold"
+    assert result.period == "last_6_months"
+    assert "unconfirmed_product_sales" not in captured["prompt"]
+
+
 def test_starter_questions_are_short_and_grounded(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -222,9 +259,7 @@ def test_semantic_enrichment_accepts_grounded_proposal(
     )
     monkeypatch.setattr(subprocess, "run", _fake_run(output))
 
-    proposals = resolve_semantic_proposals(
-        _layer(), [profile], Backend("codex", ["codex"])
-    )
+    proposals = resolve_semantic_proposals(_layer(), [profile], Backend("codex", ["codex"]))
 
     assert len(proposals) == 1
     assert proposals[0].name == "completed_order_count"
@@ -285,9 +320,7 @@ def test_validate_grounded_guidance() -> None:
         {"kind": "guidance", "text": "Compare order_count by city and product_name."},
         _layer(),
     )
-    assert res == NLResolution(
-        "guidance", text="Compare order_count by city and product_name."
-    )
+    assert res == NLResolution("guidance", text="Compare order_count by city and product_name.")
 
 
 def test_validate_ungrounded_guidance_fails_closed() -> None:

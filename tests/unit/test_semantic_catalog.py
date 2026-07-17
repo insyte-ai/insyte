@@ -55,6 +55,25 @@ def test_catalog_keeps_full_layer_when_no_metric_has_retrieval_signal() -> None:
     assert set(narrowed.metrics) == set(layer.metrics)
 
 
+def test_catalog_maps_products_sold_to_transaction_quantity() -> None:
+    layer = _layer()
+    layer.metrics["total_quantity"] = Metric(
+        label="Total quantity",
+        expression="SUM(order_items.quantity)",
+        source_table="public.order_items",
+    )
+
+    narrowed, candidates = SemanticCatalog(layer).narrowed_layer(
+        "analyze products sold in last 6 months"
+    )
+
+    assert "total_quantity" in narrowed.metrics
+    assert any(
+        item.name == "total_quantity" and item.matched_by == ("semantic:sales_quantity",)
+        for item in candidates
+    )
+
+
 def test_capability_uses_joins_cardinality_and_time_profile() -> None:
     profiles = [
         ColumnProfile(

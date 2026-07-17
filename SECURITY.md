@@ -51,8 +51,8 @@ deliberately narrow:
   schema, and model output is parsed into typed report models. Unsupported sections remain empty;
   malformed report output degrades without opening another query path.
 - **Report figures are reviewed.** A deterministic critic checks every generated report figure
-  against the supplied evidence payload. Unsupported figures block the model report; an
-  investigation then uses its deterministic structured summary.
+  against the supplied evidence payload. Claims containing unsupported figures are removed;
+  if no grounded report content remains, the model report is blocked.
 - **It leaves your machine.** The payload goes to your local `claude`/`codex` CLI, which sends
   it to that provider (Anthropic / OpenAI) under your own account. A one-time notice makes this
   explicit before the first report is generated.

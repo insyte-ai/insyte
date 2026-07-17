@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from insyte.agents.critic import CriticAgent
 from insyte.agents.planner import PlannerAgent
 from insyte.agents.quality import QualityAgent
+from insyte.agents.report import ReportAgent
 from insyte.metadata.models import CardinalityCategory, ColumnProfile
 from insyte.nl.llm import Backend
 from insyte.semantic.catalog import SemanticCatalog
@@ -113,6 +114,27 @@ def test_critic_accepts_figures_present_in_evidence() -> None:
     review = CriticAgent().review(report, {"order_count": 10, "percent_change": 8})
 
     assert review.approved is True
+
+
+def test_report_agent_removes_only_unsupported_numeric_claims() -> None:
+    report = DetailedReport(
+        tl_dr="Order count increased by 42%.",
+        decision="Keep monitoring order count.",
+        risks=[{"risk": "A 42% jump may strain capacity.", "mitigation": "Monitor daily."}],
+        generated_by="codex",
+    )
+    agent = ReportAgent(resolver=lambda *_args, **_kwargs: report)
+
+    result, review = agent.generate(
+        {"order_count": 10, "percent_change": 8}, [Backend("codex", ["codex"])]
+    )
+
+    assert result is not None
+    assert review is not None and review.approved is True
+    assert result.tl_dr == ""
+    assert result.decision == "Keep monitoring order count."
+    assert result.risks == []
+    assert "Unsupported numeric claims" in result.caveats[-1]
 
 
 def test_quality_agent_uses_persisted_null_profile() -> None:

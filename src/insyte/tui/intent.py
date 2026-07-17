@@ -175,6 +175,8 @@ def _find_metric_alias(haystack: str, layer: SemanticLayer) -> str | None:
     for phrase, alias in layer.aliases.items():
         if alias.target_type != "metric" or alias.target not in layer.metrics:
             continue
+        if layer.metrics[alias.target].requires_confirmation:
+            continue
         normalized = _normalize(phrase)
         if not normalized or f" {normalized} " not in haystack:
             continue

@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from insyte.nl.periods import RELATIVE_PERIODS, period_from_token
+from insyte.nl.periods import RELATIVE_PERIODS, period_from_token, relative_period_from_question
 
 # A fixed "now": Wednesday, 15 July 2026, 10:30 UTC.
 NOW = datetime(2026, 7, 15, 10, 30, tzinfo=UTC)
@@ -56,6 +56,25 @@ def test_last_7_days_is_half_open_and_includes_today() -> None:
     assert period.start == datetime(2026, 7, 9, tzinfo=UTC)
     assert period.end == datetime(2026, 7, 16, tzinfo=UTC)
     assert (period.end - period.start).days == 7
+
+
+def test_last_6_months_uses_six_calendar_months_including_current() -> None:
+    period = period_from_token("last_6_months", now=NOW)
+    assert period is not None
+    assert period.start == datetime(2026, 2, 1, tzinfo=UTC)
+    assert period.end == datetime(2026, 8, 1, tzinfo=UTC)
+
+
+@pytest.mark.parametrize(
+    ("question", "token"),
+    [
+        ("Show daily orders this month", "this_month"),
+        ("Analyze products sold in last 6 months", "last_6_months"),
+        ("Revenue over the last twelve months", "last_12_months"),
+    ],
+)
+def test_relative_period_from_question(question: str, token: str) -> None:
+    assert relative_period_from_question(question) == token
 
 
 def test_unknown_token_returns_none() -> None:

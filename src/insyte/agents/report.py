@@ -35,4 +35,13 @@ class ReportAgent:
             last_review = self._critic.review(report, payload)
             if last_review.approved:
                 return report, last_review
+            sanitized = self._critic.sanitize(report, payload)
+            sanitized_review = self._critic.review(sanitized, payload)
+            if sanitized_review.approved and _has_content(sanitized):
+                return sanitized, sanitized_review
         return None, last_review
+
+
+def _has_content(report: DetailedReport) -> bool:
+    data = report.model_dump(mode="json", exclude={"generated_by", "confidence_overall"})
+    return any(value not in (None, "", [], {}) for value in data.values())

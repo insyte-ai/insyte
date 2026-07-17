@@ -270,9 +270,7 @@ def resolve_semantic_proposals(
                 *[str(item) for item in raw.get("aliases", [])],
             ]
         )
-        proposal = validate_metric_proposal(
-            raw, working, profiles, question=grounding_text
-        )
+        proposal = validate_metric_proposal(raw, working, profiles, question=grounding_text)
         if proposal is None:
             continue
         accepted.append(proposal)
@@ -351,6 +349,12 @@ def build_prompt(
         "one exact safe profiled field to exact observed values. Never write SQL, expressions, "
         "columns, or values outside the supplied lists. The proposal always requires user "
         "confirmation.\n"
+        "- A relative time phrase is a period filter, never a new derived metric. Do not propose "
+        "a metric merely to represent 'this month', 'last month', 'last 6 months', or another "
+        "supported time window.\n"
+        "- For products/items/units sold, prefer an additive quantity metric from transaction "
+        "or order-line data when available. Do not substitute a product-catalog count or active "
+        "product status for completed sales volume.\n"
         "- mode: 'segment' when the user asks to break down 'by <dimension>'; "
         "'timeseries' for a trend over time (also set grain); "
         "'compare' for this-period-vs-previous (also set grain); "
@@ -360,8 +364,9 @@ def build_prompt(
         "metric is low (e.g. high margin and low sales volume) — set metric to the high metric, "
         "secondary_metric to the low metric, and dimension to the segment to rank; "
         "otherwise 'aggregate'.\n"
-        "- period: choose one relative period token for time-scoped questions "
-        "(e.g. 'last month' -> last_month), else null / all_time.\n"
+        "- period: choose one relative period token for time-scoped questions from: "
+        f"{', '.join(RELATIVE_PERIODS)}. For example, 'last month' -> last_month and "
+        "'last 6 months' -> last_6_months; otherwise null / all_time.\n"
         "- If an in-scope question asks for advice that cannot run as one analysis, return "
         "'guidance' that names 2-3 concrete analyses using metric and dimension NAMES from the "
         "lists above. Do not include knowledge that is not grounded in those lists.\n\n"
@@ -528,9 +533,9 @@ def _validate(
     if mode is AnalysisMode.compare and grain is None:
         grain = TimeGrain.month
 
-    unresolved = unresolved_terms(
-        question, metric, layer, dimension_name=dimension
-    ) if question else []
+    unresolved = (
+        unresolved_terms(question, metric, layer, dimension_name=dimension) if question else []
+    )
     if unresolved:
         return NLResolution(
             "clarification",
@@ -721,7 +726,24 @@ def resolve(
     """Run the local AI CLI to translate ``question``; return ``None`` on any failure."""
 
     retrieval_text = " ".join(filter(None, [question, context or ""]))
-    prompt_layer, candidates = (catalog or SemanticCatalog(layer)).narrowed_layer(retrieval_text)
+    routing_layer = layer.model_copy(deep=True)
+    routing_layer.metrics = {
+        name: metric
+        for name, metric in routing_layer.metrics.items()
+        if not metric.requires_confirmation
+    }
+    routing_layer.aliases = {
+        phrase: alias
+        for phrase, alias in routing_layer.aliases.items()
+        if alias.target_type != "metric" or alias.target in routing_layer.metrics
+    }
+    source_catalog = catalog or SemanticCatalog(layer)
+    routing_catalog = SemanticCatalog(
+        routing_layer,
+        profiles=source_catalog.profiles,
+        relationships=source_catalog.relationships,
+    )
+    prompt_layer, candidates = routing_catalog.narrowed_layer(retrieval_text)
     if candidates:
         logger.info(
             "nl_candidates_selected",
@@ -738,7 +760,7 @@ def resolve(
         now=now,
         history=history,
         context=context,
-        filter_fields=(catalog.safe_filter_fields(prompt_layer) if catalog else []),
+        filter_fields=routing_catalog.safe_filter_fields(prompt_layer),
     )
     out = _run(backend, prompt, timeout or _TIMEOUT_SECONDS)
     if out is None:
@@ -749,8 +771,8 @@ def resolve(
         return None
     return _validate(
         data,
-        layer,
-        profiles=(catalog.profiles if catalog else []),
+        routing_layer,
+        profiles=source_catalog.profiles,
         question=question,
     )
 

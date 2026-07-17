@@ -24,3 +24,20 @@ def test_this_week_does_not_create_false_this_qualifier() -> None:
         )
         == []
     )
+
+
+def test_transaction_quantity_represents_products_sold() -> None:
+    layer = SemanticLayer(
+        metrics={
+            "total_quantity": Metric(
+                label="Total quantity",
+                expression="SUM(order_items.quantity)",
+                source_table="public.order_items",
+            )
+        }
+    )
+
+    assert (
+        unresolved_terms("analyze products sold in the last six months", "total_quantity", layer)
+        == []
+    )

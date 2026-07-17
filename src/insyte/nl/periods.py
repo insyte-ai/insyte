@@ -25,8 +25,32 @@ RELATIVE_PERIODS: tuple[str, ...] = (
     "last_7_days",
     "last_30_days",
     "last_90_days",
+    "last_6_months",
     "last_12_months",
     "all_time",
+)
+
+_QUESTION_PERIODS: tuple[tuple[str, str], ...] = (
+    ("last twelve months", "last_12_months"),
+    ("last 12 months", "last_12_months"),
+    ("last six months", "last_6_months"),
+    ("last 6 months", "last_6_months"),
+    ("last ninety days", "last_90_days"),
+    ("last 90 days", "last_90_days"),
+    ("last thirty days", "last_30_days"),
+    ("last 30 days", "last_30_days"),
+    ("last seven days", "last_7_days"),
+    ("last 7 days", "last_7_days"),
+    ("last quarter", "last_quarter"),
+    ("this quarter", "this_quarter"),
+    ("last month", "last_month"),
+    ("this month", "this_month"),
+    ("last week", "last_week"),
+    ("this week", "this_week"),
+    ("last year", "last_year"),
+    ("this year", "this_year"),
+    ("yesterday", "yesterday"),
+    ("today", "today"),
 )
 
 
@@ -37,6 +61,17 @@ def _midnight(value: datetime) -> datetime:
 def _add_months(value: datetime, months: int) -> datetime:
     index = value.month - 1 + months
     return datetime(value.year + index // 12, index % 12 + 1, 1, tzinfo=UTC)
+
+
+def relative_period_from_question(question: str) -> str | None:
+    """Return a supported period token explicitly stated in ``question``."""
+
+    normalized = " ".join(question.casefold().replace("-", " ").split())
+    haystack = f" {normalized} "
+    for phrase, token in _QUESTION_PERIODS:
+        if f" {phrase} " in haystack:
+            return token
+    return None
 
 
 def period_from_token(token: str | None, *, now: datetime | None = None) -> Period | None:
@@ -86,6 +121,9 @@ def period_from_token(token: str | None, *, now: datetime | None = None) -> Peri
         return Period("last 30 days", midnight - timedelta(days=29), midnight + timedelta(days=1))
     if token == "last_90_days":
         return Period("last 90 days", midnight - timedelta(days=89), midnight + timedelta(days=1))
+    if token == "last_6_months":
+        start = _add_months(datetime(now.year, now.month, 1, tzinfo=UTC), -5)
+        return Period("last 6 months", start, _add_months(start, 6))
     if token == "last_12_months":
         start = _add_months(datetime(now.year, now.month, 1, tzinfo=UTC), -11)
         return Period("last 12 months", start, _add_months(start, 12))

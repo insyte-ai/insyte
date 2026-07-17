@@ -29,7 +29,7 @@ from insyte.nl.llm import (
     is_analytics_question,
     resolve,
 )
-from insyte.nl.periods import period_from_token
+from insyte.nl.periods import period_from_token, relative_period_from_question
 from insyte.nl.router import ModelRouter, ModelTask
 from insyte.semantic.catalog import SemanticCatalog
 from insyte.semantic.models import Metric, MetricFormat, SemanticLayer
@@ -100,7 +100,7 @@ def stream_analysis(
         {"context": chat_context.to_dict() if chat_context is not None else None},
     )
 
-    period: Period | None = None
+    period: Period | None = period_from_token(relative_period_from_question(question))
     if intent.kind is not IntentKind.analysis or intent.metric is None:
         builtin_reply = builtin_conversation_reply(question)
         if builtin_reply:
@@ -254,7 +254,7 @@ def stream_analysis(
             dimension=resolution.dimension,
             raw=question,
         )
-        period = period_from_token(resolution.period)
+        period = period_from_token(resolution.period or relative_period_from_question(question))
 
     selected_metric = layer.metrics.get(intent.metric) if intent.metric else None
     if selected_metric is not None and selected_metric.requires_confirmation:
