@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import socket
 
 import pytest
@@ -40,8 +41,9 @@ def test_find_available_port_exhausted() -> None:
 def test_studio_help_lists_flags() -> None:
     result = runner.invoke(app, ["studio", "--help"])
     assert result.exit_code == 0
+    output = re.sub(r"\x1b\[[0-9;]*m", "", result.stdout)
     for flag in ["--project", "--host", "--port", "--no-browser", "--reload"]:
-        assert flag in result.stdout
+        assert flag in output
 
 
 def test_studio_no_project_opens_setup(monkeypatch, isolated_home) -> None:
