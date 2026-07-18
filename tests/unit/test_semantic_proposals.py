@@ -74,10 +74,7 @@ def test_proposal_rejects_unobserved_values_and_pii() -> None:
     raw = _raw()
     raw["filter_values"] = [6]
     assert (
-        validate_metric_proposal(
-            raw, _layer(), _profiles(), question="positive feedback"
-        )
-        is None
+        validate_metric_proposal(raw, _layer(), _profiles(), question="positive feedback") is None
     )
     assert (
         validate_metric_proposal(
@@ -93,8 +90,6 @@ def test_proposal_rejects_cross_table_filter() -> None:
     profiles = _profiles()
     profiles[0].table = "payments"
     assert (
-        validate_metric_proposal(
-            raw, _layer(), profiles, question="positive feedback reviews"
-        )
+        validate_metric_proposal(raw, _layer(), profiles, question="positive feedback reviews")
         is None
     )

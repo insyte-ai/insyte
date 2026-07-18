@@ -18,6 +18,9 @@ from fastapi.responses import JSONResponse
 from starlette.responses import Response
 
 from insyte.services.project_service import ProjectService, ProjectServices
+from insyte.services.provider_auth_service import ProviderAuthService
+from insyte.services.setup_service import SetupService
+from insyte.services.update_service import UpdateService
 from insyte.studio.events import AnalysisFactory
 from insyte.studio.routes import (
     analysis,
@@ -28,6 +31,7 @@ from insyte.studio.routes import (
     metrics,
     project,
     schema,
+    setup,
     sync,
 )
 from insyte.studio.static import frontend_dir, mount_frontend
@@ -44,6 +48,7 @@ _API_ROUTERS = (
     history.router,
     sync.router,
     exports.router,
+    setup.router,
 )
 
 
@@ -53,6 +58,7 @@ def create_studio_app(
     project_name: str | None = None,
     analysis_factory: AnalysisFactory | None = None,
     frontend: Path | None = None,
+    bootstrap: bool = False,
 ) -> FastAPI:
     """Create the Studio FastAPI app.
 
@@ -60,17 +66,17 @@ def create_studio_app(
     """
 
     owns_services = services is None
-    if services is None:
+    if services is None and not bootstrap:
         services = ProjectService.open(project_name)
-    factory = analysis_factory or services.build_analysis
+    factory = analysis_factory or (services.build_analysis if services else None)
     frontend = frontend or frontend_dir()
-    resolved_services = services
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         yield
-        if owns_services:
-            resolved_services.dispose()
+        active_services: ProjectServices | None = app.state.services
+        if owns_services and active_services is not None:
+            active_services.dispose()
 
     app = FastAPI(
         title="Insyte Studio",
@@ -78,9 +84,13 @@ def create_studio_app(
         docs_url="/api/docs",
         openapi_url="/api/openapi.json",
     )
-    app.state.services = resolved_services
+    app.state.services = services
     app.state.analysis_factory = factory
     app.state.pending = {}
+    app.state.setup_jobs = {}
+    app.state.setup_service = SetupService()
+    app.state.update_service = UpdateService()
+    app.state.provider_auth_service = ProviderAuthService()
     app.state.session_token = secrets.token_urlsafe(24)
 
     @app.middleware("http")

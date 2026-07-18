@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "insyte"
-version = "0.2.13"
+version = "0.2.14"
 description = "Local-first AI analytics for PostgreSQL — natural-language questions, validated read-only SQL, credentials never exposed to the model."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -26,6 +26,8 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
+    "packaging>=24.0",
+    "certifi>=2024.7.4",
     "typer>=0.12",
     "rich>=13.7",
     "pydantic>=2.7",
@@ -63,9 +65,13 @@ dev = [
     "mypy>=1.10",
     "types-PyYAML>=6.0",
 ]
+desktop = [
+    "pyinstaller>=6.10",
+]
 
 [project.scripts]
 insyte = "insyte.main:main"
+insyte-desktop = "insyte.desktop:main"
 
 [project.urls]
 Homepage = "https://github.com/insyte-ai/insyte"

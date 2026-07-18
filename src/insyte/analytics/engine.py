@@ -8,6 +8,7 @@ formats the rows and recommends a chart.
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any, cast
 
 from insyte.analytics.charts import format_value, recommend_chart
 from insyte.analytics.comparison import compute_comparison
@@ -168,7 +169,7 @@ class AnalyticsEngine:
         execution = self._executor.execute(sql, source=_SOURCE)
         formatted = _format_segment_compare_rows(execution.rows, metric=metric)
         contributors = rank_contributors(
-            [(row[0], abs(float(row[3] or 0))) for row in execution.rows]
+            [(row[0], abs(float(cast(Any, row[3] or 0)))) for row in execution.rows]
         )
         summary = _segment_compare_summary(
             metric, dimension_name, current, baseline, execution.rows
@@ -316,7 +317,7 @@ def _format_segment_compare_rows(
                 cells.append(format_value(cell, metric.format))
             elif index == 4:
                 try:
-                    cells.append(f"{float(cell):.1f}%")
+                    cells.append(f"{float(cast(Any, cell)):.1f}%")
                 except (TypeError, ValueError):
                     cells.append(str(cell))
             else:

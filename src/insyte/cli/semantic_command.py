@@ -80,8 +80,7 @@ def questions(
     layer = repo.load()
     if not layer.metrics:
         console.print(
-            "[yellow]No metrics available.[/yellow] "
-            "Run [bold]insyte semantic generate[/bold]."
+            "[yellow]No metrics available.[/yellow] Run [bold]insyte semantic generate[/bold]."
         )
         raise typer.Exit(1)
 

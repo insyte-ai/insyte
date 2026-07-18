@@ -19,6 +19,7 @@
     activeStream: null,
     activeLoader: null,
     activeAnalysisId: null,
+    sessionToken: null,
   };
 
   // ---- helpers ---------------------------------------------------------------------------
@@ -41,17 +42,30 @@
   }
   const $ = (sel) => document.querySelector(sel);
   async function getJSON(p) {
-    const r = await fetch(API + p);
-    if (!r.ok) throw new Error("HTTP " + r.status);
+    const r = await fetch(API + p, {
+      headers: state.sessionToken ? { "x-insyte-session": state.sessionToken } : {},
+    });
+    if (!r.ok) {
+      let detail = "HTTP " + r.status;
+      try { detail = (await r.json()).detail || detail; } catch (e) {}
+      throw new Error(detail);
+    }
     return r.json();
   }
   async function postJSON(p, body) {
     const r = await fetch(API + p, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: {
+        "content-type": "application/json",
+        ...(state.sessionToken ? { "x-insyte-session": state.sessionToken } : {}),
+      },
       body: JSON.stringify(body || {}),
     });
-    if (!r.ok) throw new Error("HTTP " + r.status);
+    if (!r.ok) {
+      let detail = "HTTP " + r.status;
+      try { detail = (await r.json()).detail || detail; } catch (e) {}
+      throw new Error(detail);
+    }
     return r.json();
   }
   function compact(n) {
@@ -138,6 +152,11 @@
       el("div", { class: "nav-heading" }, "Workspace"),
       navButton("Chat", "💬", "chat"),
       navButton("Investigations", "◇", "investigations"),
+      el("div", { class: "nav-heading" }, "Data"),
+      navButton("Schema", "▦", "schema"),
+      navButton("Metrics", "◉", "metrics"),
+      navButton("History", "↺", "history"),
+      navButton("Settings", "⚙", "settings"),
       el("div", { class: "nav-heading" }, "Recent"),
       recent,
       el("div", { class: "nav-heading" }, "Saved investigations"),
@@ -178,6 +197,10 @@
     else if (r === "metrics") renderMetricsPage(view);
     else if (r === "history") renderHistoryPage(view);
     else if (r === "settings") renderSettingsPage(view);
+    requestAnimationFrame(() => {
+      const main = $(".main");
+      if (main) main.scrollTop = 0;
+    });
   }
 
   // ---- chat ------------------------------------------------------------------------------
@@ -237,7 +260,7 @@
     );
     const composer = el("div", { class: "composer" },
       field,
-      el("button", { class: "composer-send", id: "composer-send", title: "Ask", onClick: onSendClick }, sendIcon())
+      el("button", { class: "composer-send", id: "composer-send", title: "Ask", "aria-label": "Ask", onClick: onSendClick }, sendIcon())
     );
     const composerWrap = el("div", { class: "composer-wrap" }, composer);
     const samples = el("div", { class: "suggestions", id: "chat-samples" },
@@ -309,7 +332,7 @@
     return svg;
   }
   function sendIcon() { return iconSvg('<path d="M12 20V5"/><path d="M5 12l7-7 7 7"/>'); }
-  function stopIcon() { return iconSvg('<rect x="6.5" y="6.5" width="11" height="11" rx="2.5" fill="currentColor" stroke="none"/>'); }
+  function stopIcon() { return iconSvg('<rect x="4.25" y="4.25" width="15.5" height="15.5" rx="3.25" fill="currentColor" stroke="none"/>'); }
 
   function onSendClick() {
     if (state.busy) stopAnalysis();
@@ -321,6 +344,7 @@
     if (!btn) return;
     btn.classList.toggle("busy", busy);
     btn.title = busy ? "Stop" : "Ask";
+    btn.setAttribute("aria-label", busy ? "Stop analysis" : "Ask");
     btn.innerHTML = "";
     btn.appendChild(busy ? stopIcon() : sendIcon());
   }
@@ -1441,13 +1465,60 @@
   }
 
   function renderSettingsPage(view) {
-    const page = el("div", { class: "page" }, el("h2", {}, "Settings"));
-    page.append(el("div", { class: "setting-row" },
-      el("span", {}, "Theme"),
-      el("button", { class: "icon-btn", onClick: toggleTheme }, document.documentElement.getAttribute("data-theme") === "dark" ? "☀ Light" : "☾ Dark")
-    ));
+    const page = el("div", { class: "page settings-page" },
+      el("h2", {}, "Settings"),
+      el("p", { class: "settings-intro muted" }, "Manage application updates and database projects. Use the theme button in the header to change appearance.")
+    );
     const cfg = el("pre", { class: "sql" }, "Loading config…");
-    page.append(el("div", { class: "nav-heading" }, "Public configuration"), cfg);
+    const updateText = el("span", { class: "muted", id: "update-status" }, "Check PyPI for a newer packaged release.");
+    const updateButton = el("button", { class: "ghost-btn", onClick: async () => {
+      updateButton.disabled = true;
+      updateText.textContent = "Checking…";
+      try {
+        const result = await getJSON("/updates/check");
+        updateText.innerHTML = "";
+        if (result.update_available) {
+          updateText.append("Version " + result.latest_version + " is available. ",
+            el("a", { href: result.release_url, target: "_blank", rel: "noreferrer" }, "Open download"));
+        } else if (result.latest_version) {
+          updateText.textContent = "Insyte " + result.current_version + " is up to date.";
+        } else {
+          updateText.textContent = result.error || "Could not check for updates.";
+        }
+      } catch (e) { updateText.textContent = e.message; }
+      updateButton.disabled = false;
+    } }, "Check for updates");
+    page.append(el("div", { class: "setting-row" },
+      el("div", {}, el("strong", {}, "Application updates"), el("div", {}, updateText)),
+      updateButton
+    ));
+    const switchButton = el("button", { class: "ghost-btn setting-switch", onClick: async () => {
+      const confirmed = window.confirm("Return to database setup? Your current project will stay saved and can be reopened later.");
+      if (!confirmed) return;
+      switchButton.disabled = true;
+      switchButton.textContent = "Disconnecting…";
+      try {
+        await postJSON("/setup/disconnect", {});
+        location.hash = "";
+        location.reload();
+      } catch (e) {
+        switchButton.disabled = false;
+        switchButton.textContent = "Set up another database";
+        showError(e);
+      }
+    } }, "Set up another database");
+    page.append(el("div", { class: "setting-row setting-project" },
+      el("div", {},
+        el("strong", {}, "Database project"),
+        el("div", { class: "muted" }, "Return to onboarding without deleting this project's metrics, history, or credentials.")
+      ),
+      switchButton
+    ));
+    page.append(el("details", { class: "settings-config" },
+      el("summary", {}, "Advanced configuration"),
+      el("div", { class: "muted settings-config-help" }, "Read-only public settings for this project. Database credentials are never shown."),
+      cfg
+    ));
     view.append(page);
     getJSON("/config/public").then((c) => { cfg.textContent = JSON.stringify(c, null, 2); });
   }
@@ -1489,10 +1560,230 @@
     document.body.appendChild(backdrop);
   }
 
+  // ---- first-run setup ------------------------------------------------------------------
+  function renderSetup(setup) {
+    const app = $("#app");
+    app.innerHTML = "";
+    app.className = "setup-app";
+    const provider = el("select", { id: "setup-provider", class: "setup-input" },
+      el("option", { value: "off" }, "Continue without AI"),
+      el("option", { value: "claude" }, "Claude Code" + (setup.providers.claude.installed ? " · installed" : " · not installed")),
+      el("option", { value: "codex" }, "Codex" + (setup.providers.codex.installed ? " · installed" : " · not installed"))
+    );
+    const providerNote = el("span", { class: "setup-provider-note" }, "AI is optional. You can use deterministic metric analysis without it.");
+    const providerButton = el("button", { class: "ghost-btn hidden", type: "button", onClick: async () => {
+      providerButton.disabled = true;
+      providerNote.textContent = "Opening the provider sign-in flow…";
+      try {
+        const login = await postJSON("/setup/providers/" + provider.value + "/login", {});
+        if (login.authenticated) {
+          providerNote.textContent = "Connected";
+        } else {
+          await pollProviderJob(login.job_id, providerNote, providerButton);
+        }
+      } catch (e) {
+        providerNote.textContent = e.message;
+        providerButton.disabled = false;
+      }
+    } }, "Sign in");
+    async function refreshProvider() {
+      if (provider.value === "off") {
+        providerNote.textContent = "AI is optional. You can use deterministic metric analysis without it.";
+        providerButton.classList.add("hidden");
+        return;
+      }
+      try {
+        const result = await getJSON("/setup/providers/" + provider.value);
+        providerNote.textContent = result.detail;
+        providerButton.classList.toggle("hidden", !result.installed || result.authenticated);
+        providerButton.disabled = false;
+      } catch (e) { providerNote.textContent = e.message; }
+    }
+    provider.addEventListener("change", refreshProvider);
+    Promise.all(["codex", "claude"].map(async (name) => {
+      try { return await getJSON("/setup/providers/" + name); }
+      catch (e) { return null; }
+    })).then((statuses) => {
+      if (provider.value !== "off") return;
+      const preferred = statuses.find((item) => item && item.authenticated)
+        || statuses.find((item) => item && item.installed);
+      if (preferred) {
+        provider.value = preferred.provider;
+        refreshProvider();
+      }
+    });
+    const target = el("select", { id: "setup-target", class: "setup-input" },
+      el("option", { value: "postgres" }, "Standard PostgreSQL"),
+      el("option", { value: "aws" }, "AWS RDS / Aurora PostgreSQL"),
+      el("option", { value: "gcp" }, "GCP Cloud SQL for PostgreSQL")
+    );
+    const name = el("input", { class: "setup-input", id: "setup-name", value: "my-project", autocomplete: "off" });
+    const url = el("input", { class: "setup-input", id: "setup-url", type: "password", placeholder: "postgresql://reader:password@host:5432/database", autocomplete: "off", spellcheck: "false", "aria-describedby": "setup-url-help setup-url-error" });
+    const urlError = el("span", { class: "setup-inline-error hidden", id: "setup-url-error", role: "alert" });
+    const revealUrl = el("button", { class: "setup-reveal", type: "button", onClick: () => {
+      const hidden = url.type === "password";
+      url.type = hidden ? "text" : "password";
+      revealUrl.textContent = hidden ? "Hide" : "Show";
+    } }, "Show");
+    const clearUrlError = () => {
+      url.classList.remove("invalid");
+      url.removeAttribute("aria-invalid");
+      urlError.classList.add("hidden");
+    };
+    const showUrlError = (message) => {
+      urlError.textContent = message;
+      urlError.classList.remove("hidden");
+      url.classList.add("invalid");
+      url.setAttribute("aria-invalid", "true");
+      url.focus();
+    };
+    url.addEventListener("input", clearUrlError);
+    const schemas = el("input", { class: "setup-input", id: "setup-schemas", value: "public", autocomplete: "off" });
+    const ssl = el("select", { class: "setup-input", id: "setup-ssl" },
+      ...["prefer", "require", "verify-ca", "verify-full", "disable"].map((value) => el("option", { value }, value))
+    );
+    const hint = el("div", { class: "setup-hint", id: "setup-url-help" }, "Use a dedicated read-only PostgreSQL role. The URL is sent only to this local Insyte process.");
+    target.addEventListener("change", () => {
+      hint.textContent = target.value === "aws"
+        ? "Paste the RDS/Aurora PostgreSQL endpoint URL and allow your IP in its security group."
+        : target.value === "gcp"
+          ? "Paste a Cloud SQL PostgreSQL URL reachable from this computer. Auth Proxy support comes next."
+          : "Use a dedicated read-only PostgreSQL role. The URL is sent only to this local Insyte process.";
+    });
+    const status = el("div", { class: "setup-progress hidden", id: "setup-progress" });
+    const button = el("button", { class: "setup-primary", onClick: async () => {
+      const cleanUrl = url.value.trim();
+      if (!cleanUrl) { showUrlError("Paste the read-only PostgreSQL URL to continue."); return; }
+      if (!/^postgres(?:ql)?:\/\//i.test(cleanUrl)) { showUrlError("Use a PostgreSQL URL beginning with postgresql://"); return; }
+      clearUrlError();
+      button.disabled = true;
+      status.classList.remove("hidden");
+      status.textContent = "Testing the read-only connection…";
+      const body = {
+        name: name.value.trim(), database_url: cleanUrl, schemas: schemas.value.split(",").map((x) => x.trim()).filter(Boolean),
+        ssl_mode: ssl.value, analytics_mode: "direct", ai_client: provider.value,
+      };
+      try {
+        if (provider.value !== "off") {
+          const auth = await getJSON("/setup/providers/" + provider.value);
+          if (!auth.authenticated) throw new Error("Sign in to " + provider.value + " before continuing, or choose without AI.");
+        }
+        const created = await postJSON("/setup/projects", body);
+        url.value = "";
+        const warning = created.connection.has_write_access ? " The database role can write; replace it with a read-only role." : "";
+        status.textContent = "Connection verified." + warning + " Starting schema setup…";
+        const started = await postJSON("/setup/run", {});
+        await pollSetupJob(started.job_id, status, button);
+      } catch (e) {
+        status.textContent = e.message;
+        button.disabled = false;
+      }
+    } }, "Test connection and continue →");
+    const providerSection = el("section", { class: "setup-section" },
+      el("div", { class: "setup-section-head" },
+        el("span", { class: "setup-step-number" }, "1"),
+        el("div", {}, el("div", { class: "setup-section-title" }, "Choose your AI provider"), el("div", { class: "setup-section-copy" }, "Insyte uses the provider already installed and signed in on this Mac."))
+      ),
+      el("div", { class: "setup-grid" },
+        el("label", { class: "wide" }, el("span", {}, "Provider"), provider, el("div", { class: "setup-provider-row" }, providerNote, providerButton))
+      )
+    );
+    const databaseSection = el("section", { class: "setup-section" },
+      el("div", { class: "setup-section-head" },
+        el("span", { class: "setup-step-number" }, "2"),
+        el("div", {}, el("div", { class: "setup-section-title" }, "Connect a read-only database"), el("div", { class: "setup-section-copy" }, "The connection is tested locally before Insyte stores anything."))
+      ),
+      el("div", { class: "setup-grid" },
+        el("label", {}, el("span", {}, "Database location"), target),
+        el("label", {}, el("span", {}, "Project name"), name),
+        el("label", { class: "wide" }, el("span", {}, "PostgreSQL connection URL"), el("div", { class: "setup-secret-wrap" }, url, revealUrl), urlError),
+        el("label", {}, el("span", {}, "Allowed schemas"), schemas),
+        el("label", {}, el("span", {}, "SSL mode"), ssl)
+      ),
+      hint,
+      el("details", { class: "setup-help" },
+        el("summary", {}, "Where do I find the database URL?"),
+        el("code", {}, "postgresql://USERNAME:PASSWORD@HOST:5432/DATABASE"),
+        el("p", {}, "Use credentials for a dedicated PostgreSQL user with CONNECT, schema USAGE, and SELECT permissions only.")
+      )
+    );
+    let existingSection = null;
+    if (setup.projects && setup.projects.length) {
+      const savedProject = el("select", { class: "setup-input" },
+        ...setup.projects.map((projectName) => el("option", { value: projectName }, projectName))
+      );
+      const openSaved = el("button", { class: "ghost-btn", onClick: async () => {
+        openSaved.disabled = true;
+        openSaved.textContent = "Opening…";
+        try {
+          await postJSON("/setup/projects/" + encodeURIComponent(savedProject.value) + "/open", {});
+          location.reload();
+        } catch (e) {
+          openSaved.disabled = false;
+          openSaved.textContent = "Open saved project";
+          status.classList.remove("hidden");
+          status.textContent = e.message;
+        }
+      } }, "Open saved project");
+      existingSection = el("section", { class: "setup-section setup-existing" },
+        el("div", {}, el("div", { class: "setup-section-title" }, "Open a saved project"), el("div", { class: "setup-section-copy" }, "Reconnect to an existing local project, or continue below to add another database.")),
+        el("div", { class: "setup-existing-row" }, savedProject, openSaved)
+      );
+    }
+    const setupSections = existingSection
+      ? [existingSection, providerSection, databaseSection]
+      : [providerSection, databaseSection];
+    const card = el("div", { class: "setup-card" },
+      el("div", { class: "setup-brand" },
+        el("img", { class: "brand-logo logo-dark", src: "/assets/logo-dark.png", alt: "Insyte" }),
+        el("img", { class: "brand-logo logo-light", src: "/assets/logo-light.png", alt: "Insyte" })
+      ),
+      el("div", { class: "setup-kicker" }, "Local-first setup · about 2 minutes"),
+      el("h1", {}, "Connect your data"),
+      el("p", { class: "setup-lead" }, "Set up your AI provider and read-only PostgreSQL connection. Credentials stay on this Mac."),
+      el("div", { class: "setup-sections" }, ...setupSections),
+      button, status
+    );
+    app.append(card);
+  }
+
+  async function pollProviderJob(jobId, note, button) {
+    while (true) {
+      const job = await getJSON("/setup/provider-jobs/" + encodeURIComponent(jobId));
+      note.textContent = job.message;
+      if (job.status === "completed") { button.classList.add("hidden"); return; }
+      if (job.status === "failed") { button.disabled = false; return; }
+      await new Promise((resolve) => setTimeout(resolve, 800));
+    }
+  }
+
+  async function pollSetupJob(jobId, status, button) {
+    while (true) {
+      const job = await getJSON("/setup/jobs/" + encodeURIComponent(jobId));
+      status.textContent = job.message || "Working…";
+      if (job.status === "completed") {
+        status.textContent = "Ready — found " + job.result.tables + " tables and generated " + job.result.metrics + " metrics.";
+        setTimeout(() => location.reload(), 900);
+        return;
+      }
+      if (job.status === "failed") {
+        status.textContent = job.error || "Setup failed.";
+        button.disabled = false;
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 700));
+    }
+  }
+
   // ---- boot ------------------------------------------------------------------------------
   async function boot() {
     initTheme();
     initBackground();
+    try {
+      const setup = await getJSON("/setup/status");
+      state.sessionToken = setup.session_token;
+      if (setup.needs_setup) { renderSetup(setup); return; }
+    } catch (e) {}
     try { state.status = await getJSON("/status"); } catch (e) { /* DB may be down */ }
     try { state.metrics = await getJSON("/metrics"); } catch (e) {}
     try { const d = await getJSON("/conversations"); state.conversations = d.conversations || []; } catch (e) {}

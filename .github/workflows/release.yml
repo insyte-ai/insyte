@@ -11,7 +11,22 @@ on:
       - "v*"
 
 jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Install
+        run: uv sync --extra dev
+      - name: Lint and format
+        run: uv run ruff check src tests && uv run ruff format --check src tests
+      - name: Type check
+        run: uv run mypy src
+      - name: Test
+        run: uv run pytest -q
+
   build-and-publish:
+    needs: quality
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
@@ -28,3 +43,61 @@ jobs:
           python -m zipfile -l dist/*.whl | grep nl/report_skill.md
       - name: Publish to PyPI
         run: uv publish
+
+  build-macos:
+    needs: quality
+    runs-on: macos-14
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Install desktop build dependencies
+        run: uv sync --extra desktop
+      - name: Import Apple signing certificate
+        if: ${{ secrets.MACOS_CERTIFICATE_P12 != '' }}
+        env:
+          CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.MACOS_KEYCHAIN_PASSWORD }}
+        run: |
+          CERTIFICATE_PATH="$RUNNER_TEMP/insyte-certificate.p12"
+          KEYCHAIN_PATH="$RUNNER_TEMP/insyte-signing.keychain-db"
+          echo "$CERTIFICATE_P12" | base64 --decode > "$CERTIFICATE_PATH"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERTIFICATE_PATH" -P "$CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security list-keychain -d user -s "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          SIGNING_IDENTITY="$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" | awk -F '"' '/Developer ID Application/{print $2; exit}')"
+          test -n "$SIGNING_IDENTITY"
+          echo "APPLE_DEVELOPER_IDENTITY=$SIGNING_IDENTITY" >> "$GITHUB_ENV"
+      - name: Build application and DMG
+        run: ./scripts/build_macos_dmg.sh
+      - name: Notarize and staple public DMG
+        if: ${{ env.APPLE_DEVELOPER_IDENTITY != '' && secrets.APPLE_ID != '' && secrets.APPLE_APP_PASSWORD != '' && secrets.APPLE_TEAM_ID != '' }}
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          DMG_PATH="$(find dist -maxdepth 1 -name 'Insyte-*.dmg' -print -quit)"
+          xcrun notarytool submit "$DMG_PATH" --apple-id "$APPLE_ID" --password "$APPLE_APP_PASSWORD" --team-id "$APPLE_TEAM_ID" --wait
+          xcrun stapler staple "$DMG_PATH"
+          shasum -a 256 "$DMG_PATH" > "$DMG_PATH.sha256"
+          echo "SIGNED_RELEASE=true" >> "$GITHUB_ENV"
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Insyte-macOS
+          path: |
+            dist/Insyte-*.dmg
+            dist/Insyte-*.dmg.sha256
+      - name: Attach signed DMG to GitHub release
+        if: ${{ env.SIGNED_RELEASE == 'true' }}
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/Insyte-*.dmg
+            dist/Insyte-*.dmg.sha256

@@ -14,7 +14,7 @@ import typer
 import uvicorn
 from rich.console import Console
 
-from insyte.exceptions import InsyteError
+from insyte.exceptions import InsyteError, ProjectNotFoundError
 from insyte.services.project_service import ProjectService, ProjectServices
 from insyte.studio.app import STUDIO_PROJECT_ENV, create_studio_app
 
@@ -62,12 +62,20 @@ def studio(
     console.print("[bold]Starting Insyte Studio…[/bold]")
 
     try:
-        services = ProjectService.open(project)
+        services: ProjectServices | None = ProjectService.open(project)
+    except ProjectNotFoundError as exc:
+        if project is not None:
+            console.print(f"[red]Error:[/red] {exc}")
+            raise typer.Exit(1) from exc
+        services = None
     except InsyteError as exc:
         console.print(f"[red]Error:[/red] {exc}")
         raise typer.Exit(1) from exc
 
-    _print_diagnostics(services)
+    if services is not None:
+        _print_diagnostics(services)
+    else:
+        console.print("[yellow]![/yellow] No project yet — opening browser setup")
     selected_port = find_available_port(port, host)
     url = f"http://{host}:{selected_port}"
 
@@ -81,6 +89,8 @@ def studio(
 
     if reload:
         # Reload re-imports the app, so it can't hold a live services object.
+        if services is None:
+            raise InsyteError("Reload mode requires an existing project.")
         services.dispose()
         os.environ[STUDIO_PROJECT_ENV] = services.config.project.name
         uvicorn.run(
@@ -93,11 +103,12 @@ def studio(
         )
         return
 
-    app = create_studio_app(services=services)
+    app = create_studio_app(services=services, bootstrap=services is None)
     try:
         uvicorn.run(app, host=host, port=selected_port, log_level="warning")
     finally:
-        services.dispose()
+        if services is not None:
+            services.dispose()
 
 
 def _print_diagnostics(services: ProjectServices) -> None:

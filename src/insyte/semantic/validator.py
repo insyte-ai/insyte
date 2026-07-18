@@ -63,9 +63,7 @@ def validate_semantic(layer: SemanticLayer, index: SchemaIndex) -> list[Semantic
             )
         elif alias.target_type == "dimension" and alias.target not in layer.dimensions:
             issues.append(
-                SemanticIssue(
-                    "error", f"alias.{phrase}", f"unknown dimension '{alias.target}'"
-                )
+                SemanticIssue("error", f"alias.{phrase}", f"unknown dimension '{alias.target}'")
             )
         elif alias.target_type not in {"metric", "dimension"}:
             issues.append(
@@ -87,9 +85,7 @@ def validate_semantic(layer: SemanticLayer, index: SchemaIndex) -> list[Semantic
     for position, question in enumerate(layer.starter_questions):
         target = f"starter_question.{position}"
         if question.metric not in layer.metrics:
-            issues.append(
-                SemanticIssue("error", target, f"unknown metric '{question.metric}'")
-            )
+            issues.append(SemanticIssue("error", target, f"unknown metric '{question.metric}'"))
         if question.dimension and question.dimension not in layer.dimensions:
             issues.append(
                 SemanticIssue("error", target, f"unknown dimension '{question.dimension}'")
