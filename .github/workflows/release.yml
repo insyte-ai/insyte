@@ -49,17 +49,24 @@ jobs:
     runs-on: macos-14
     permissions:
       contents: write
+    env:
+      MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+      MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+      MACOS_KEYCHAIN_PASSWORD: ${{ secrets.MACOS_KEYCHAIN_PASSWORD }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
       - name: Install desktop build dependencies
         run: uv sync --extra desktop
       - name: Import Apple signing certificate
-        if: ${{ secrets.MACOS_CERTIFICATE_P12 != '' }}
+        if: ${{ env.MACOS_CERTIFICATE_P12 != '' }}
         env:
-          CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
-          CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
-          KEYCHAIN_PASSWORD: ${{ secrets.MACOS_KEYCHAIN_PASSWORD }}
+          CERTIFICATE_P12: ${{ env.MACOS_CERTIFICATE_P12 }}
+          CERTIFICATE_PASSWORD: ${{ env.MACOS_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ env.MACOS_KEYCHAIN_PASSWORD }}
         run: |
           CERTIFICATE_PATH="$RUNNER_TEMP/insyte-certificate.p12"
           KEYCHAIN_PATH="$RUNNER_TEMP/insyte-signing.keychain-db"
@@ -76,11 +83,11 @@ jobs:
       - name: Build application and DMG
         run: ./scripts/build_macos_dmg.sh
       - name: Notarize and staple public DMG
-        if: ${{ env.APPLE_DEVELOPER_IDENTITY != '' && secrets.APPLE_ID != '' && secrets.APPLE_APP_PASSWORD != '' && secrets.APPLE_TEAM_ID != '' }}
+        if: ${{ env.APPLE_DEVELOPER_IDENTITY != '' && env.APPLE_ID != '' && env.APPLE_APP_PASSWORD != '' && env.APPLE_TEAM_ID != '' }}
         env:
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_ID: ${{ env.APPLE_ID }}
+          APPLE_APP_PASSWORD: ${{ env.APPLE_APP_PASSWORD }}
+          APPLE_TEAM_ID: ${{ env.APPLE_TEAM_ID }}
         run: |
           DMG_PATH="$(find dist -maxdepth 1 -name 'Insyte-*.dmg' -print -quit)"
           xcrun notarytool submit "$DMG_PATH" --apple-id "$APPLE_ID" --password "$APPLE_APP_PASSWORD" --team-id "$APPLE_TEAM_ID" --wait
