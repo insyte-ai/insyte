@@ -98,7 +98,7 @@ SQL.
 
 ### macOS app (no terminal or Python required for Insyte)
 
-Download the latest signed Apple silicon DMG from
+Download the latest Apple silicon DMG from
 [GitHub Releases](https://github.com/insyte-ai/insyte/releases/latest/download/Insyte-macOS-arm64.dmg),
 drag Insyte to Applications, and open it. The app bundles the matching Insyte package and Python
 runtime, then opens the local Studio setup wizard. It does not run `pip install` on the user's
