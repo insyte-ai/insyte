@@ -117,3 +117,13 @@ def get_active_project() -> str | None:
         return None
     value = marker.read_text(encoding="utf-8").strip()
     return value or None
+
+
+def clear_active_project() -> bool:
+    """Clear the active-project marker without deleting any project data."""
+
+    marker = _active_project_marker()
+    if not marker.exists():
+        return False
+    marker.unlink()
+    return True

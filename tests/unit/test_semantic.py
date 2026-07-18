@@ -68,9 +68,7 @@ def test_round_trip(tmp_path: Path) -> None:
         },
         dimensions={"d": Dimension(source="t.col")},
         aliases={
-            "business volume": SemanticAlias(
-                target="m", confidence=0.83, evidence=["metric:m"]
-            )
+            "business volume": SemanticAlias(target="m", confidence=0.83, evidence=["metric:m"])
         },
         starter_questions=[
             StarterQuestion(

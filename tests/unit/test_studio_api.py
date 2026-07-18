@@ -19,6 +19,12 @@ from insyte.analytics.models import (
 )
 from insyte.config import loader, paths
 from insyte.config.models import InsyteConfig, ProjectSection
+from insyte.connectors.base import (
+    ConnectionCheckResult,
+    PermissionReport,
+    ServerInfo,
+    SSLInfo,
+)
 from insyte.exceptions import QueryValidationError
 from insyte.metadata.models import (
     ScannedColumn,
@@ -31,6 +37,7 @@ from insyte.metadata.repository import MetadataRepository
 from insyte.semantic.models import StarterQuestion
 from insyte.semantic.repository import SemanticRepository
 from insyte.services.project_service import ProjectService
+from insyte.services.setup_service import SetupService
 from insyte.studio.app import create_studio_app
 
 _FIXTURE_SEMANTIC = Path(__file__).parent.parent / "fixtures" / "semantic.yaml"
@@ -79,6 +86,21 @@ def _setup_project(name: str = "demo") -> None:
 
 
 class FakeConnector:
+    def check_connection(self) -> ConnectionCheckResult:
+        return ConnectionCheckResult(
+            server=ServerInfo(
+                version="PostgreSQL 16",
+                is_postgres=True,
+                database="analytics",
+                user="reader",
+            ),
+            ssl=SSLInfo(in_use=True, protocol="TLSv1.3"),
+            permissions=PermissionReport(False, False, False, False),
+            read_only_enforced=True,
+            statement_timeout_seconds=20,
+            lock_timeout_seconds=3,
+        )
+
     def dispose(self) -> None:
         pass
 
@@ -222,6 +244,74 @@ def _final_result(sse_text: str) -> dict:
 
 def test_health(client: TestClient) -> None:
     assert client.get("/api/health").json() == {"status": "ok"}
+
+
+def test_bootstrap_studio_starts_without_project() -> None:
+    app = create_studio_app(bootstrap=True)
+    with TestClient(app) as bootstrap_client:
+        body = bootstrap_client.get("/api/setup/status").json()
+        assert body["needs_setup"] is True
+        assert body["projects"] == []
+        assert bootstrap_client.get("/api/status").status_code == 409
+
+
+def test_browser_setup_creates_and_activates_project() -> None:
+    app = create_studio_app(bootstrap=True)
+    app.state.setup_service = SetupService(lambda _url, _config: FakeConnector())
+    with TestClient(app) as bootstrap_client:
+        token = bootstrap_client.get("/api/setup/status").json()["session_token"]
+        response = bootstrap_client.post(
+            "/api/setup/projects",
+            headers={"x-insyte-session": token},
+            json={
+                "name": "rds-demo",
+                "database_url": "postgresql://reader:secret@db.example.com:5432/analytics",
+                "schemas": ["public"],
+                "ssl_mode": "require",
+                "ai_client": "codex",
+            },
+        )
+        assert response.status_code == 200
+        assert response.json()["connection"]["read_only_enforced"] is True
+        assert bootstrap_client.get("/api/setup/status").json()["needs_setup"] is False
+        public = bootstrap_client.get("/api/config/public").json()
+        assert public["project"] == "rds-demo"
+        assert "secret" not in json.dumps(public)
+
+
+def test_disconnect_returns_to_setup_without_deleting_project(isolated_home: Path) -> None:
+    _setup_project("keep-me")
+    paths.set_active_project("keep-me")
+    services = ProjectService.open("keep-me")
+    app = create_studio_app(services=services)
+
+    with TestClient(app) as test_client:
+        token = test_client.get("/api/setup/status").json()["session_token"]
+        response = test_client.post("/api/setup/disconnect", headers={"x-insyte-session": token})
+        status = test_client.get("/api/setup/status").json()
+
+    assert response.json() == {"disconnected": True, "projects": ["keep-me"]}
+    assert status["needs_setup"] is True
+    assert status["active_project"] is None
+    assert loader.project_exists("keep-me")
+    assert paths.get_active_project() is None
+
+
+def test_saved_project_can_be_reopened_from_setup(isolated_home: Path) -> None:
+    _setup_project("saved")
+    app = create_studio_app(bootstrap=True)
+
+    with TestClient(app) as test_client:
+        token = test_client.get("/api/setup/status").json()["session_token"]
+        response = test_client.post(
+            "/api/setup/projects/saved/open", headers={"x-insyte-session": token}
+        )
+        status = test_client.get("/api/setup/status").json()
+
+    assert response.json() == {"project": "saved"}
+    assert status["needs_setup"] is False
+    assert status["active_project"] == "saved"
+    assert paths.get_active_project() == "saved"
 
 
 def test_status(client: TestClient) -> None:
@@ -477,6 +567,31 @@ def test_blocked_query_never_runs(isolated_home: Path) -> None:
         result = _final_result(events)
         assert result["status"] == "blocked"
         assert result["warnings"]
+    services.dispose()
+
+
+def test_unexpected_analysis_error_completes_stream(isolated_home: Path) -> None:
+    class ExplodingAnalysis(FakeAnalysis):
+        def aggregate(self, metric, period=None):  # noqa: ANN001, ANN202
+            raise ModuleNotFoundError("simulated frozen-only import failure")
+
+    _setup_project()
+    services = ProjectService.open("demo")
+    app = create_studio_app(
+        services=services,
+        analysis_factory=lambda: (ExplodingAnalysis(), FakeConnector()),
+    )
+    with TestClient(app) as test_client:
+        conv = test_client.post("/api/conversations", json={}).json()
+        posted = test_client.post(
+            f"/api/conversations/{conv['id']}/messages",
+            json={"content": "payment failure rate"},
+        ).json()
+        events = test_client.get(posted["stream_url"]).text
+        result = _final_result(events)
+
+    assert result["status"] == "error"
+    assert "could not be completed" in result["summary"]
     services.dispose()
 
 

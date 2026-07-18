@@ -18,6 +18,35 @@ Package name: **`insyte`** · command: **`insyte`** · Python **>= 3.11**.
 The existing PyPI project is [insyte](https://pypi.org/project/insyte/). Releases use GitHub
 Actions Trusted Publishing from annotated `v*` tags; do not store a PyPI token in the repository.
 
+## macOS desktop package
+
+The desktop application bundles the exact checked-out Insyte version, Python runtime, runtime
+dependencies, and Studio assets. It never runs `pip install --upgrade` on a user's machine.
+
+```bash
+uv sync --extra desktop
+./scripts/build_macos_dmg.sh
+```
+
+Without signing credentials this produces an ad-hoc-signed DMG for local testing only. Public
+downloads require `APPLE_DEVELOPER_IDENTITY` to name an imported Developer ID Application
+certificate, followed by Apple notarization and stapling before the DMG is uploaded to GitHub
+Releases. Expected outputs are `dist/Insyte-macOS-<arch>.dmg` and its SHA-256 file. The stable
+asset name allows the website to use GitHub's `/releases/latest/download/...` URL while the tag
+and bundled application metadata retain the exact version.
+
+The release workflow expects these GitHub Actions secrets before it will publish the DMG:
+
+- `MACOS_CERTIFICATE_P12` (base64-encoded Developer ID Application certificate)
+- `MACOS_CERTIFICATE_PASSWORD`
+- `MACOS_KEYCHAIN_PASSWORD`
+- `APPLE_ID`
+- `APPLE_APP_PASSWORD` (app-specific password)
+- `APPLE_TEAM_ID`
+
+Without all signing and notarization values, the workflow still uploads an ad-hoc-signed DMG as
+a private workflow artifact for testing, but does not attach it to the public GitHub release.
+
 ---
 
 ## 1. Target onboarding UX (the whole point)

@@ -79,8 +79,12 @@ def validate_generated_questions(
         words = {word.lower() for word in _WORD.findall(question)}
         if not words.intersection(_semantic_words(metric_name, metric.label)):
             continue
-        if dimension_name and not words.intersection(
-            _semantic_words(dimension_name, dimension.label or dimension_name)
+        if (
+            dimension_name
+            and dimension is not None
+            and not words.intersection(
+                _semantic_words(dimension_name, dimension.label or dimension_name)
+            )
         ):
             continue
         if words - known_words - QUESTION_VOCABULARY:

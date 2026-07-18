@@ -44,6 +44,14 @@ def test_studio_help_lists_flags() -> None:
         assert flag in result.stdout
 
 
-def test_studio_no_project(isolated_home) -> None:
-    result = runner.invoke(app, ["studio"])
-    assert result.exit_code == 1
+def test_studio_no_project_opens_setup(monkeypatch, isolated_home) -> None:
+    launched = []
+    monkeypatch.setattr(
+        "insyte.cli.studio_command.uvicorn.run",
+        lambda app, **kwargs: launched.append(app),
+    )
+    monkeypatch.setattr("insyte.cli.studio_command.find_available_port", lambda *_args: 3838)
+    result = runner.invoke(app, ["studio", "--no-browser"])
+    assert result.exit_code == 0
+    assert "opening browser setup" in result.stdout
+    assert launched

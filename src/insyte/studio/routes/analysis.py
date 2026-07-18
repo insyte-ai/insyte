@@ -7,7 +7,7 @@ import json
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
-from insyte.semantic.proposals import apply_metric_proposal
+from insyte.semantic.proposals import DerivedMetricProposal, apply_metric_proposal
 from insyte.services.project_service import ProjectServices
 from insyte.studio.context import ChatContext
 from insyte.studio.dependencies import get_analysis_factory, get_pending, get_services
@@ -84,7 +84,7 @@ def analysis_events(
         if context is not None:
             services.conversations.save_context(conversation_id, context, analysis_id)
 
-    def on_proposal(proposal) -> None:  # noqa: ANN001 - callback type lives in semantic module
+    def on_proposal(proposal: DerivedMetricProposal) -> None:
         current = services.semantic.load()
         if proposal.name not in current.metrics:
             services.semantic.save(apply_metric_proposal(proposal, current))

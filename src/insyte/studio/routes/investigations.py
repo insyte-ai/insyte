@@ -13,7 +13,7 @@ router = APIRouter()
 
 
 def _investigation(inv: SavedInvestigation, *, include_result: bool = False) -> dict:
-    payload = {
+    payload: dict[str, object] = {
         "id": inv.id,
         "analysis_id": inv.analysis_id,
         "conversation_id": inv.conversation_id,
@@ -31,9 +31,7 @@ def _investigation(inv: SavedInvestigation, *, include_result: bool = False) -> 
 @router.get("/investigations")
 def list_investigations(services: ProjectServices = Depends(get_services)) -> dict:
     return {
-        "investigations": [
-            _investigation(inv) for inv in services.conversations.investigations()
-        ]
+        "investigations": [_investigation(inv) for inv in services.conversations.investigations()]
     }
 
 

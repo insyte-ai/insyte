@@ -73,9 +73,7 @@ def test_guided_setup_profiles_before_generating_semantics(
     monkeypatch.setattr(semantic_command, "validate", lambda **kwargs: calls.append("validate"))
     monkeypatch.setattr(semantic_command, "enrich", lambda **kwargs: calls.append("enrich"))
     monkeypatch.setattr(semantic_command, "questions", lambda **kwargs: calls.append("questions"))
-    monkeypatch.setattr(
-        mcp_command, "install_client", lambda *args, **kwargs: calls.append("mcp")
-    )
+    monkeypatch.setattr(mcp_command, "install_client", lambda *args, **kwargs: calls.append("mcp"))
 
     init_command._run_guided_setup([AIClient.codex])
 

@@ -96,6 +96,20 @@ SQL.
 
 ## Install & set up
 
+### macOS app (no terminal or Python required for Insyte)
+
+Download the latest signed Apple silicon DMG from
+[GitHub Releases](https://github.com/insyte-ai/insyte/releases/latest/download/Insyte-macOS-arm64.dmg),
+drag Insyte to Applications, and open it. The app bundles the matching Insyte package and Python
+runtime, then opens the local Studio setup wizard. It does not run `pip install` on the user's
+computer. AI-powered questions use an already-installed Claude Code or Codex client; that client
+opens and owns its browser sign-in flow.
+
+Release builds use the exact package version from the tagged source. Studio can check PyPI for a
+newer version and link to the latest release, but updates remain user-controlled.
+
+### Python package
+
 Easiest — **pipx** installs Insyte in its own isolated environment (no virtual-env to manage):
 
 ```bash
@@ -113,7 +127,19 @@ pip install insyte
 insyte init
 ```
 
-`insyte init` walks you through it:
+You can now start with the browser instead:
+
+```bash
+insyte studio
+```
+
+When no project exists, Studio opens a local first-run wizard. Choose Claude, Codex, or the
+deterministic mode; paste a PostgreSQL URL; select schemas and SSL mode; and let Insyte test the
+read-only connection, scan, profile, generate metrics, and validate the semantic layer. The URL
+is submitted only to the local `127.0.0.1` process and is stored in the same protected `0600`
+project secret used by the CLI.
+
+`insyte init` remains available for terminal-first and automated setup. It walks you through:
 
 1. Enter your **read-only database URL** (stored once in a `0600` file — never in config,
    never logged, never sent to an AI).
@@ -129,6 +155,20 @@ insyte studio        # browser workspace at http://127.0.0.1:3838
 insyte chat          # terminal UI
 insyte analyze total_amount --by city
 ```
+
+### AWS RDS and GCP Cloud SQL
+
+The Studio wizard accepts standard password-based PostgreSQL URLs for Amazon RDS/Aurora
+PostgreSQL and Google Cloud SQL for PostgreSQL. The database must be reachable from the local
+computer through an allowlisted public endpoint, VPN, or an already-running proxy/tunnel. Use a
+dedicated PostgreSQL role with `CONNECT`, schema `USAGE`, and table `SELECT` privileges only.
+
+AWS IAM tokens and automatic Google Cloud SQL Auth Proxy/IAM login are not static URLs and are
+planned as separate credential providers. BigQuery, Redshift, Athena, and Spanner are not
+PostgreSQL and are not supported by this connector.
+
+Studio Settings also includes **Check for updates**. It compares the running version with PyPI
+and links to the latest GitHub release; it never installs or upgrades packages automatically.
 
 **Requirements:** Python 3.11+, a PostgreSQL database, and — for natural-language questions —
 the `claude` or `codex` CLI (Studio also answers metric questions without one).

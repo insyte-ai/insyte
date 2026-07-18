@@ -42,3 +42,6 @@ def test_active_project_round_trip(isolated_home: Path) -> None:
     assert paths.get_active_project() is None
     paths.set_active_project("demo")
     assert paths.get_active_project() == "demo"
+    assert paths.clear_active_project() is True
+    assert paths.get_active_project() is None
+    assert paths.clear_active_project() is False

@@ -9,6 +9,7 @@ and audit logging all apply.
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -52,6 +53,7 @@ from insyte.tui.intent import AnalysisMode, Intent, IntentKind, parse_intent
 
 AnalysisFactory = Callable[[], tuple[AnalysisService, DatabaseConnector]]
 _SOURCE = "studio"
+logger = logging.getLogger(__name__)
 
 
 def sse(event: str, data: dict) -> str:
@@ -340,6 +342,21 @@ def stream_analysis(
         except InsyteError as exc:
             result = studio_result_message(
                 analysis_id, str(exc), status="error", warnings=[str(exc)]
+            )
+            context = _final_context(
+                question, result, chat_context, intent, period, detailed=detailed
+            )
+            result.context = context.to_dict()
+            on_complete(result, context)
+            yield sse("response_completed", {"result": result.model_dump(mode="json")})
+            return
+        except Exception:  # noqa: BLE001 - preserve the user-facing event stream boundary
+            logger.exception("Unexpected Studio analysis failure")
+            result = studio_result_message(
+                analysis_id,
+                "The analysis could not be completed. Please try again.",
+                status="error",
+                warnings=["An unexpected local analysis error occurred."],
             )
             context = _final_context(
                 question, result, chat_context, intent, period, detailed=detailed

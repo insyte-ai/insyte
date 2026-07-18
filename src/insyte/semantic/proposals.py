@@ -99,9 +99,7 @@ def validate_metric_proposal(
     )
 
 
-def apply_metric_proposal(
-    proposal: DerivedMetricProposal, layer: SemanticLayer
-) -> SemanticLayer:
+def apply_metric_proposal(proposal: DerivedMetricProposal, layer: SemanticLayer) -> SemanticLayer:
     """Add a confirmation-required derived metric and grounded aliases to a copied layer."""
 
     result = layer.model_copy(deep=True)
