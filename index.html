@@ -1215,6 +1215,10 @@
       box-shadow: 0 14px 34px rgba(43,168,242,.3), inset 0 1px 0 rgba(255,255,255,.28);
     }
 
+    .floating-note {
+      display: none !important;
+    }
+
     /* Hero */
     .hero {
       min-height: calc(100vh - 82px);
@@ -1318,6 +1322,8 @@
     }
 
     .app-window {
+      position: relative;
+      z-index: 2;
       min-height: 566px;
       border-color: rgba(138,159,216,.29);
       border-radius: 25px;
@@ -1391,11 +1397,14 @@
     .insight:hover { transform: translateX(2px); border-color: rgba(43,168,242,.22); }
 
     .floating-note {
-      right: -22px;
-      bottom: 34px;
-      border-color: rgba(157,126,240,.34);
-      background: rgba(10,15,29,.88);
-      box-shadow: 0 25px 70px rgba(0,0,0,.4), inset 0 1px 0 rgba(255,255,255,.04);
+      right: -34px;
+      bottom: 22px;
+      width: 176px;
+      z-index: 1;
+      pointer-events: none;
+      border-color: rgba(157,126,240,.28);
+      background: rgba(10,15,29,.82);
+      box-shadow: 0 22px 54px rgba(0,0,0,.34), inset 0 1px 0 rgba(255,255,255,.035);
     }
 
     .trust-strip { padding-top: 38px; }
@@ -1816,7 +1825,7 @@
 
       .hero { padding-top: 53px; }
       .app-window { min-height: 545px; }
-      .floating-note { display: block; right: 16px; bottom: 28px; }
+      .floating-note { display: none; }
       .section { padding: 100px 0; }
       .pipeline-shell { padding: 18px; }
       .pipe-step { min-height: 0; }
