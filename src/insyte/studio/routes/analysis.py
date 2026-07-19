@@ -102,7 +102,29 @@ def analysis_events(
         detailed=bool(job.get("detailed", False)),
         on_proposal=on_proposal,
     )
-    return StreamingResponse(stream, media_type="text/event-stream")
+    # Keep cancellation state on the application object rather than the project services;
+    # this also works while an analysis is already streaming.
+    app_cancelled = getattr(getattr(request, "app", None), "state", None)
+    cancelled_ids = getattr(app_cancelled, "cancelled_analyses", set())
+
+    def cancellable_stream():
+        for item in stream:
+            if analysis_id in cancelled_ids:
+                cancelled_ids.discard(analysis_id)
+                yield sse(
+                    "response_completed",
+                    {
+                        "result": {
+                            "analysis_id": analysis_id,
+                            "status": "cancelled",
+                            "summary": "Analysis stopped.",
+                        }
+                    },
+                )
+                return
+            yield item
+
+    return StreamingResponse(cancellable_stream(), media_type="text/event-stream")
 
 
 @router.post("/analyses/{analysis_id}/retry")
@@ -120,6 +142,10 @@ def retry_analysis(
 
 
 @router.post("/analyses/{analysis_id}/cancel")
-def cancel_analysis(analysis_id: str, pending: dict = Depends(get_pending)) -> dict:
+def cancel_analysis(
+    analysis_id: str, request: Request, pending: dict = Depends(get_pending)
+) -> dict:
     existed = pending.pop(analysis_id, None) is not None
-    return {"analysis_id": analysis_id, "cancelled": existed}
+    cancelled_ids = getattr(request.app.state, "cancelled_analyses", set())
+    cancelled_ids.add(analysis_id)
+    return {"analysis_id": analysis_id, "cancelled": True, "was_pending": existed}

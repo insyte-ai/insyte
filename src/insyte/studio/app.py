@@ -87,6 +87,7 @@ def create_studio_app(
     app.state.services = services
     app.state.analysis_factory = factory
     app.state.pending = {}
+    app.state.cancelled_analyses = set()
     app.state.setup_jobs = {}
     app.state.setup_service = SetupService()
     app.state.update_service = UpdateService()

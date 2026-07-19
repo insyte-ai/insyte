@@ -84,7 +84,7 @@ Studio also supports:
   "this week", Insyte uses daily buckets and compares only the same elapsed portion of last week.
 - **Saved investigations** — completed investigations are saved locally. Open the
   Investigations workspace from the left sidebar to review the timeline, report, linked result,
-  and export Markdown/JSON.
+  and export a complete PDF report.
 - **Model routes** — set `ai.intent_backend`, `ai.planner_backend`, and `ai.report_backend` to
   `auto`, `claude`, `codex`, or `off`. Set `ai.fallback_backend` only when another model should be
   tried before deterministic fallback.

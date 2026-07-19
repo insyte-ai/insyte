@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "insyte"
-version = "0.2.14"
+version = "0.2.15"
 description = "Local-first AI analytics for PostgreSQL — natural-language questions, validated read-only SQL, credentials never exposed to the model."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -50,6 +50,8 @@ dependencies = [
     "duckdb-engine>=0.13",
     "pyarrow>=16.0",
     "polars>=1.0",
+    "openpyxl>=3.1",
+    "reportlab>=4.0",
     # Milestone 10 — Insyte Studio (browser workspace).
     "fastapi>=0.110",
     "uvicorn>=0.29",
