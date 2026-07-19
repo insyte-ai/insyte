@@ -102,7 +102,6 @@ jobs:
             dist/Insyte-*.dmg
             dist/Insyte-*.dmg.sha256
       - name: Attach signed DMG to GitHub release
-        if: ${{ env.SIGNED_RELEASE == 'true' }}
         uses: softprops/action-gh-release@v2
         with:
           files: |
