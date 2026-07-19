@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
@@ -105,9 +106,9 @@ def analysis_events(
     # Keep cancellation state on the application object rather than the project services;
     # this also works while an analysis is already streaming.
     app_cancelled = getattr(getattr(request, "app", None), "state", None)
-    cancelled_ids = getattr(app_cancelled, "cancelled_analyses", set())
+    cancelled_ids: set[str] = getattr(app_cancelled, "cancelled_analyses", set())
 
-    def cancellable_stream():
+    def cancellable_stream() -> Iterator[str]:
         for item in stream:
             if analysis_id in cancelled_ids:
                 cancelled_ids.discard(analysis_id)
@@ -146,6 +147,6 @@ def cancel_analysis(
     analysis_id: str, request: Request, pending: dict = Depends(get_pending)
 ) -> dict:
     existed = pending.pop(analysis_id, None) is not None
-    cancelled_ids = getattr(request.app.state, "cancelled_analyses", set())
+    cancelled_ids: set[str] = getattr(request.app.state, "cancelled_analyses", set())
     cancelled_ids.add(analysis_id)
     return {"analysis_id": analysis_id, "cancelled": True, "was_pending": existed}
