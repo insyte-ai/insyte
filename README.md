@@ -37,7 +37,7 @@ Two things are always true:
   a daily trend and compare the elapsed window with the same elapsed window last week.
 - **Saved investigations** — completed Studio investigations are saved locally with their
   timeline, report, original question, and linked analysis result. Reopen them from the
-  Investigations workspace and export Markdown or JSON.
+  Investigations workspace and export complete PDF reports.
 - **Task-aware model routing** — intent resolution, investigation planning, and reports can use
   different local Claude/Codex backends. Explicit fallback is opt-in; deterministic behavior
   remains available for every task.

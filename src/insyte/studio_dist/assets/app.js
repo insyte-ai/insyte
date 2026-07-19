@@ -19,6 +19,8 @@
     activeStream: null,
     activeLoader: null,
     activeAnalysisId: null,
+    activeConversationId: null,
+    activeStatus: "Reading your question…",
     sessionToken: null,
   };
 
@@ -271,18 +273,43 @@
     // container loses .empty: the log fills the space and the composer sticks to the bottom.
     const chat = el("div", { class: "chat empty", id: "chat" }, hero, log, composerWrap, samples);
     view.append(chat);
+    if (state.busy && state.activeStream && state.conversationId === state.activeConversationId) {
+      const loader = el("div", { class: "msg loader" },
+        el("span", { class: "spinner" }),
+        el("span", { class: "loader-text" }, state.activeStatus || "Working…")
+      );
+      log.append(loader);
+      state.activeLoader = loader;
+      setComposerBusy(true);
+    }
     if (state.conversationId) loadMessages(state.conversationId, log);
     else setTimeout(() => input.focus(), 0);
   }
 
   function loadMessages(id, log) {
     getJSON("/conversations/" + id).then((data) => {
+      const activeLoader = state.busy && state.activeStream && id === state.activeConversationId
+        ? state.activeLoader : null;
       log.innerHTML = "";
       if (data.messages && data.messages.length) setChatActive();
-      for (const m of data.messages) {
-        if (m.role === "user") appendUser(log, m.content);
-        else appendAssistantText(log, m.content);
-      }
+      Promise.all((data.messages || []).map(async (m) => {
+        if (m.role === "user") return { message: m };
+        if (!m.analysis_id) return { message: m };
+        try {
+          const saved = await getJSON("/analyses/" + encodeURIComponent(m.analysis_id));
+          return { message: m, result: saved };
+        } catch (e) {
+          return { message: m };
+        }
+      })).then((items) => {
+        for (const item of items) {
+          const m = item.message;
+          if (m.role === "user") appendUser(log, m.content);
+          else if (item.result && item.result.status !== "pending") log.append(renderResult(item.result));
+          else appendAssistantText(log, m.content);
+        }
+        if (activeLoader) log.append(activeLoader);
+      });
     });
   }
 
@@ -353,6 +380,8 @@
     state.activeStream = null;
     state.activeLoader = null;
     state.activeAnalysisId = null;
+    state.activeConversationId = null;
+    state.activeStatus = "Reading your question…";
     setComposerBusy(false);
   }
   function stopAnalysis() {
@@ -378,7 +407,7 @@
 
     ensureConversation()
       .then((cid) => postJSON("/conversations/" + cid + "/messages", { content: text, detailed: !!state.detailed }))
-      .then((job) => streamAnalysis(log, job))
+      .then((job) => streamAnalysis(log, job, state.conversationId))
       .catch(showError);
   }
 
@@ -466,7 +495,7 @@
       .join(" ");
   }
 
-  function streamAnalysis(log, job) {
+  function streamAnalysis(log, job, conversationId) {
     const text = el("span", { class: "loader-text" }, "Reading your question…");
     const loader = el("div", { class: "msg loader" }, el("span", { class: "spinner" }), text);
     log.append(loader);
@@ -476,13 +505,21 @@
     state.activeStream = source;
     state.activeLoader = loader;
     state.activeAnalysisId = job.analysis_id;
+    state.activeConversationId = conversationId;
+    state.activeStatus = "Reading your question…";
     setComposerBusy(true);
 
     Object.keys(PHASES).forEach((ev) =>
-      source.addEventListener(ev, () => { text.textContent = (PHASES[ev] || readableEventName(ev)) + "…"; })
+      source.addEventListener(ev, () => {
+        state.activeStatus = (PHASES[ev] || readableEventName(ev)) + "…";
+        document.querySelectorAll(".loader-text").forEach((node) => { node.textContent = state.activeStatus; });
+      })
     );
     source.addEventListener("query_blocked", () => {});
-    source.addEventListener("report_generating", () => { text.textContent = "Writing your detailed report…"; });
+    source.addEventListener("report_generating", () => {
+      state.activeStatus = "Writing your detailed report…";
+      document.querySelectorAll(".loader-text").forEach((node) => { node.textContent = state.activeStatus; });
+    });
     source.addEventListener("report_skipped", () => {});
     source.addEventListener("report_failed", () => {});
     source.addEventListener("response_completed", (e) => {
@@ -703,6 +740,20 @@
     downloadBlob(filename, new Blob([reportMarkdown(r)], { type: "text/markdown" }));
   }
 
+  async function exportPdf(analysisId, button) {
+    const original = button.textContent;
+    button.textContent = "Preparing PDF…";
+    button.disabled = true;
+    try {
+      const response = await fetch("/api/analyses/" + encodeURIComponent(analysisId) + "/exports/pdf", { method: "POST" });
+      if (!response.ok) throw new Error("Unable to export PDF");
+      downloadBlob((analysisId || "report") + ".pdf", await response.blob());
+    } finally {
+      button.textContent = original;
+      button.disabled = false;
+    }
+  }
+
   function downloadBlob(filename, blob) {
     const a = el("a", { href: URL.createObjectURL(blob), download: filename });
     document.body.append(a);
@@ -716,8 +767,7 @@
     wrap.append(el("div", { class: "report-head" },
       el("span", { class: "report-title" }, "◍ Detailed report"),
       el("div", { class: "report-actions" },
-        el("button", { class: "ghost-btn", onClick: () => exportMarkdown((r.analysis_id || "report") + ".md", r) }, "Markdown"),
-        el("button", { class: "ghost-btn", onClick: () => exportJSON((r.analysis_id || "report") + ".json", r) }, "JSON"),
+        el("button", { class: "ghost-btn", onClick: (e) => exportPdf(r.analysis_id, e.currentTarget).catch(() => {}) }, "PDF"),
         el("span", { class: "conf-chip " + (rep.confidence_overall || "medium") }, (rep.confidence_overall || "medium") + " confidence")
       )
     ));
