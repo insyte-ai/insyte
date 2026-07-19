@@ -31,9 +31,7 @@ def export_csv(
 
 
 @router.post("/analyses/{analysis_id}/exports/xlsx")
-def export_xlsx(
-    analysis_id: str, services: ProjectServices = Depends(get_services)
-) -> Response:
+def export_xlsx(analysis_id: str, services: ProjectServices = Depends(get_services)) -> Response:
     stored = services.conversations.get_analysis(analysis_id)
     if stored is None:
         raise HTTPException(status_code=404, detail="Analysis not found.")
@@ -46,9 +44,7 @@ def export_xlsx(
 
 
 @router.post("/analyses/{analysis_id}/exports/pdf")
-def export_pdf(
-    analysis_id: str, services: ProjectServices = Depends(get_services)
-) -> Response:
+def export_pdf(analysis_id: str, services: ProjectServices = Depends(get_services)) -> Response:
     stored = services.conversations.get_analysis(analysis_id)
     if stored is None:
         raise HTTPException(status_code=404, detail="Analysis not found.")

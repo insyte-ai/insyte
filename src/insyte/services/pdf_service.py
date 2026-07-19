@@ -36,9 +36,7 @@ def result_to_pdf(result: dict[str, Any]) -> bytes:
     styles = getSampleStyleSheet()
     story: list[Any] = [
         Paragraph("Insyte Analysis Report", styles["Title"]),
-        Paragraph(
-            datetime.now(UTC).strftime("Generated %Y-%m-%d %H:%M UTC"), styles["Normal"]
-        ),
+        Paragraph(datetime.now(UTC).strftime("Generated %Y-%m-%d %H:%M UTC"), styles["Normal"]),
         Spacer(1, 16),
     ]
 
@@ -84,13 +82,17 @@ def result_to_pdf(result: dict[str, Any]) -> bytes:
         story.append(Paragraph("Complete result data", styles["Heading2"]))
         data = [columns] + [[_cell(value) for value in row] for row in rows]
         tab = Table(data, repeatRows=1, splitByRow=1)
-        tab.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#25304a")),
-            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-            ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#cccccc")),
-            ("FONTSIZE", (0, 0), (-1, -1), 7),
-            ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ]))
+        tab.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#25304a")),
+                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                    ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#cccccc")),
+                    ("FONTSIZE", (0, 0), (-1, -1), 7),
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ]
+            )
+        )
         story.append(tab)
 
     document.build(story)
@@ -160,8 +162,12 @@ def _chart_table(story: list[Any], styles: Any, chart: dict[str, Any]) -> None:
             if previous is not None:
                 drawing.add(
                     Line(
-                        previous[0], previous[1], x, y,
-                        strokeColor=colors.HexColor("#5968ff"), strokeWidth=2,
+                        previous[0],
+                        previous[1],
+                        x,
+                        y,
+                        strokeColor=colors.HexColor("#5968ff"),
+                        strokeWidth=2,
                     )
                 )
             previous = (x, y)
@@ -183,12 +189,16 @@ def _chart_table(story: list[Any], styles: Any, chart: dict[str, Any]) -> None:
         [_cell(label), _cell(value)] for label, value in zip(labels, values, strict=False)
     ]
     tab = Table(data, repeatRows=1, colWidths=[3.5 * inch, 2 * inch])
-    tab.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#4c5cff")),
-        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-        ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
-        ("FONTSIZE", (0, 0), (-1, -1), 8),
-    ]))
+    tab.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#4c5cff")),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
+                ("FONTSIZE", (0, 0), (-1, -1), 8),
+            ]
+        )
+    )
     story.append(tab)
     story.append(Spacer(1, 8))
 

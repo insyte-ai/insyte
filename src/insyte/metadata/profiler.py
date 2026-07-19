@@ -181,7 +181,7 @@ def _extremes(
 ) -> tuple[str | None, str | None, float | None]:
     if not non_null:
         return None, None, None
-    numeric = [float(v) for v in non_null if isinstance(v, (int, float, Decimal))]
+    numeric = [float(v) for v in non_null if isinstance(v, int | float | Decimal)]
     avg = (
         round(sum(numeric) / len(numeric), 4) if numeric and len(numeric) == len(non_null) else None
     )

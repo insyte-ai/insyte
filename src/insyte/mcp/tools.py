@@ -332,9 +332,9 @@ def _suggested_tool(mode: AnalysisMode) -> str:
 
 
 def _cell(value: object) -> object:
-    if value is None or isinstance(value, (bool, int, float, str)):
+    if value is None or isinstance(value, bool | int | float | str):
         return value
-    if isinstance(value, (datetime, date)):
+    if isinstance(value, datetime | date):
         return value.isoformat()
     if isinstance(value, Decimal):
         return float(value)

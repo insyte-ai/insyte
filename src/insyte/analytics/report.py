@@ -315,7 +315,7 @@ def _flag(issue: str, severity: str, affected: str, impact: str) -> dict:
 def _scalar(value: object) -> object:
     """Coerce a cell to a JSON-safe scalar (datetimes → iso, Decimal/other → str/float)."""
 
-    if value is None or isinstance(value, (bool, int, float, str)):
+    if value is None or isinstance(value, bool | int | float | str):
         return value
     if isinstance(value, datetime):
         return value.isoformat()
